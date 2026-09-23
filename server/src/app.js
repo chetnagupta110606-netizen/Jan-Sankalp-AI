@@ -2,6 +2,7 @@ const path = require('path');
 const express = require('express');
 const config = require('./config');
 const routes = require('./routes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 function createApp() {
   const app = express();
@@ -18,6 +19,7 @@ function createApp() {
   });
 
   app.use('/api', routes);
+  app.use('/api/v1/telecom', webhookRoutes);
 
   app.use((error, _req, res, _next) => {
     const status = error.status || 500;
