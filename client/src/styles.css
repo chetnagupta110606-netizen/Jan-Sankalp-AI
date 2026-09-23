@@ -1,0 +1,149 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #f4f6f8;
+  color: #16202a;
+}
+
+.topbar {
+  padding: 20px 24px;
+  background: #0f3b5f;
+  color: #fff;
+}
+
+.topbar h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.gate-config {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+main {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  max-width: 900px;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #dfe5ea;
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-size: 16px;
+}
+
+form {
+  display: grid;
+  gap: 10px;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid #c7d0d8;
+  border-radius: 6px;
+}
+
+button {
+  background: #0f3b5f;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  justify-self: start;
+  padding: 9px 16px;
+}
+
+.report-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.report-card {
+  border: 1px solid #e2e8ee;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.report-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.report-card h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #445;
+}
+
+.status-resolved_verified {
+  background: #e7f7ed;
+  color: #16723c;
+}
+
+.status-pending_manual_audit {
+  background: #fdf3e0;
+  color: #8a5a00;
+}
+
+.status-rejected_location_mismatch {
+  background: #fdeaea;
+  color: #a02020;
+}
+
+.badge-ai-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e7f7ed;
+  color: #14713b;
+  border: 1px solid #9ad6b3;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-ai-verified .check {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.audit-detail {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #4a5761;
+}
+
+.result {
+  font-size: 13px;
+  color: #4a5761;
+  min-height: 18px;
+}

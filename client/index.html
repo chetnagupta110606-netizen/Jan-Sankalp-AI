@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Civic Resolution Gate</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Civic Resolution Gate</h1>
+      <p id="gate-config" class="gate-config"></p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>File a report</h2>
+        <form id="report-form">
+          <input name="title" placeholder="Issue title" required />
+          <input name="description" placeholder="Description" />
+          <input name="h3Cell" id="report-h3" placeholder="H3 cell" />
+          <label>Issue photo <input type="file" name="photo" accept="image/*" /></label>
+          <button type="submit">Create report</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Submit proof of resolution</h2>
+        <form id="resolution-form">
+          <select name="reportId" id="resolution-report" required></select>
+          <label>
+            Resolution photo (geotagged)
+            <input type="file" name="photo" accept="image/*" required />
+          </label>
+          <button type="submit">Run AI gate</button>
+        </form>
+        <p id="resolution-result" class="result"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Reports</h2>
+        <ul id="report-list" class="report-list"></ul>
+      </section>
+    </main>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
