@@ -78,6 +78,8 @@ function renderReport(report) {
 }
 
 function renderReports(reports) {
+  const selected = resolutionSelect.value;
+
   reportList.replaceChildren(...reports.map(renderReport));
   resolutionSelect.replaceChildren(
     ...reports.map((report) => {
@@ -87,6 +89,10 @@ function renderReports(reports) {
       return option;
     }),
   );
+
+  if (reports.some((report) => report.id === selected)) {
+    resolutionSelect.value = selected;
+  }
 }
 
 async function loadReports() {
@@ -115,6 +121,8 @@ resolutionForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const formData = new FormData(resolutionForm);
   const reportId = formData.get('reportId');
+  const reportTitle =
+    resolutionSelect.options[resolutionSelect.selectedIndex].textContent;
   formData.delete('reportId');
 
   resolutionResult.textContent = 'Running AI gate\u2026';
@@ -124,11 +132,12 @@ resolutionForm.addEventListener('submit', async (event) => {
   });
   const report = await response.json();
   resolutionResult.textContent = report.resolution
-    ? `${report.resolution.status}${report.resolution.reason ? ` \u2014 ${report.resolution.reason}` : ''}`
-    : report.error || 'Unexpected response';
+    ? `${reportTitle}: ${report.resolution.status}${report.resolution.reason ? ` \u2014 ${report.resolution.reason}` : ''}`
+    : `${reportTitle}: ${report.error || 'Unexpected response'}`;
 
-  resolutionForm.reset();
+  resolutionForm.querySelector('input[type="file"]').value = '';
   await loadReports();
+  resolutionSelect.value = reportId;
 });
 
 loadConfig();
