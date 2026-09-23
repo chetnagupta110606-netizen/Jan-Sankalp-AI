@@ -1,11 +1,11 @@
-const { latLngToCell } = require('h3-js');
 const config = require('../config');
-const { cellCenter } = require('../utils/geo');
+const { cellCenter, cellForPoint } = require('../utils/geo');
 
 const gazetteer = [
   {
     name: 'Jaipur Walled City',
     aliases: ['jaipur walled city', 'walled city', 'jaipur'],
+    h3Cell: config.targetH3Cell,
     ...cellCenter(config.targetH3Cell),
   },
 ];
@@ -46,6 +46,7 @@ function matchPlace(text) {
     ? {
         name: best.place.name,
         matchedText: best.alias,
+        h3Cell: best.place.h3Cell || null,
         latitude: best.place.latitude,
         longitude: best.place.longitude,
         source: 'gazetteer',
@@ -70,11 +71,7 @@ function extractLocation({ text, coordinates }) {
       latitude: coordinates.latitude,
       longitude: coordinates.longitude,
       source: 'whatsapp_location_attachment',
-      h3Cell: latLngToCell(
-        coordinates.latitude,
-        coordinates.longitude,
-        config.h3Resolution,
-      ),
+      h3Cell: cellForPoint(coordinates, config.h3Resolution),
     };
   }
 
@@ -85,7 +82,12 @@ function extractLocation({ text, coordinates }) {
 
   return {
     ...place,
-    h3Cell: latLngToCell(place.latitude, place.longitude, config.h3Resolution),
+    h3Cell:
+      place.h3Cell ||
+      cellForPoint(
+        { latitude: place.latitude, longitude: place.longitude },
+        config.h3Resolution,
+      ),
   };
 }
 
