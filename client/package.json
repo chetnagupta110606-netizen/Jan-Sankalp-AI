@@ -1,0 +1,15 @@
+{
+  "name": "jan-sankalp-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jan-Sankalp AI SPA frontend (Leaflet + Web Speech API + DPR export).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}

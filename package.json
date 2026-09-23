@@ -1,0 +1,16 @@
+{
+  "name": "jan-sankalp-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jan-Sankalp AI — decoupled civic grievance platform. /client SPA + /server microservice with persistent database.",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "start": "node start-all.js",
+    "start:server": "npm --prefix server start",
+    "start:client": "npm --prefix client start",
+    "migrate": "npm --prefix server run migrate"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
