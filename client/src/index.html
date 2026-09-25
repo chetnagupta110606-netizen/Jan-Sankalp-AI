@@ -215,30 +215,6 @@
             </div>
           </section>
 
-          <section class="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl shadow-slate-950/40">
-            <h2 class="mb-3 text-xl font-semibold text-white">Proof of Resolution Gate</h2>
-            <p class="mb-3 text-xs text-slate-400">
-              Field officers submit a geotagged close-out photo. EXIF GPS must match H3
-              <code class="text-cyan-300">8c2a100d36bffff</code> within 50 m, then structural similarity is scored.
-            </p>
-            <label class="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400" for="resolutionPhotoInput">
-              Resolution photo (EXIF GPS)
-            </label>
-            <input id="resolutionPhotoInput" type="file" accept="image/*"
-              class="mb-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-2 text-xs text-slate-300" />
-            <label class="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400" for="originalPhotoInput">
-              Original incident photo (optional)
-            </label>
-            <input id="originalPhotoInput" type="file" accept="image/*"
-              class="mb-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-2 text-xs text-slate-300" />
-            <button id="submitResolutionButton" type="button"
-              class="w-full rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-500">
-              Submit Proof of Resolution
-            </button>
-            <div id="resolutionGateResult" class="mt-4 rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-300">
-              Awaiting field-officer close-out.
-            </div>
-          </section>
         </aside>
         </div>
 

@@ -129,22 +129,6 @@ function safeBody(req) {
   return (req && req.body && typeof req.body === 'object') ? req.body : {};
 }
 
-// Role validation middleware
-function validateOfficerRole(req, res, next) {
-  const userRole = req.headers['x-user-role'] || req.body.userRole || req.query.role;
-  const allowedRoles = ['OFFICER', 'ADMIN', 'officer', 'admin'];
-
-  if (!userRole || !allowedRoles.includes(userRole)) {
-    return res.status(403).json({
-      success: false,
-      error: 'Access denied. Officer or Admin role required.'
-    });
-  }
-
-  req.userRole = userRole;
-  next();
-}
-
 function pickImage(req, keys) {
   const body = safeBody(req);
   const files = req.files || {};
@@ -331,4 +315,4 @@ async function submitResolution(req, res) {
   }
 }
 
-module.exports = { submitResolution, validateOfficerRole, checkQualityAuditTrigger, resolveIncident };
+module.exports = { submitResolution, checkQualityAuditTrigger, resolveIncident };

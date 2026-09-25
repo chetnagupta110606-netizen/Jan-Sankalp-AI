@@ -12,8 +12,8 @@ const db = require('../config/database');
 // Normalise a DB row (postgres snake_case or file store) into the API shape.
 function toIncidentPayload(row = {}) {
   if (!row) return null;
-  const lat = Number(row.latitude);
-  const lng = Number(row.longitude);
+  const lat = row.latitude == null ? NaN : Number(row.latitude);
+  const lng = row.longitude == null ? NaN : Number(row.longitude);
   return {
     id: row.id,
     transcript: row.transcript || '',

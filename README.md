@@ -59,6 +59,17 @@ database so records survive server restarts.
 | `POST` | `/verify-satellite` | Dual-layer spatial imagery comparison telemetry |
 | `POST` | `/dpr` | Generate complete report metadata from DB records |
 | `GET`  | `/dpr` · `/dpr/:id` | Convenience DPR lookups |
+| `POST` | `/resolutions` · `/incidents/:id/resolution` | Officer/Admin resolution proof; requires a trusted bearer JWT |
+
+### Resolution API authorization
+Resolution submission requires an HS256 JWT issued by the configured trusted
+identity provider. The server validates its signature, issuer, audience,
+subject, expiry, and `role` claim (`OFFICER` or `ADMIN`). Configure
+`AUTH_JWT_SECRET` (at least 32 bytes), `AUTH_JWT_ISSUER`, and
+`AUTH_JWT_AUDIENCE` in the server environment. The issuer must sign tokens with
+the same secret and provide those claims. Requests must send a valid bearer
+token in the `Authorization` header. Missing server configuration fails closed
+with HTTP 503; missing or invalid tokens are rejected.
 
 ---
 

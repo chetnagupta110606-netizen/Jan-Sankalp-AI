@@ -20,8 +20,9 @@ const {
 const { verifySatellite } = require('../controllers/satelliteController');
 const { generateDpr, getDpr, getDprById } = require('../controllers/dprController');
 const { validateReportSubmission, downloadIncidentCsv } = require('../controllers/reportController');
-const { submitResolution, validateOfficerRole, resolveIncident } = require('../controllers/resolutionController');
+const { submitResolution, resolveIncident } = require('../controllers/resolutionController');
 const { getAnalyticsMetrics } = require('../controllers/analyticsController');
+const { requireOfficerOrAdmin } = require('../middleware/requireOfficerOrAdmin');
 
 const router = express.Router();
 const uploadRoot = path.join(__dirname, '..', '..', 'uploads', 'resolutions');
@@ -70,8 +71,8 @@ router.get('/dpr', getDpr);
 router.get('/dpr/:id', getDprById);
 
 // ── Proof-of-resolution anti-fraud gate ────────────────────────────
-router.post('/resolutions', validateOfficerRole, submitResolution);
-router.post('/incidents/:id/resolution', validateOfficerRole, submitResolution);
+router.post('/resolutions', requireOfficerOrAdmin, submitResolution);
+router.post('/incidents/:id/resolution', requireOfficerOrAdmin, submitResolution);
 router.post('/incidents/:incidentId/resolve', upload.single('proofImage'), resolveIncident);
 
 module.exports = router;

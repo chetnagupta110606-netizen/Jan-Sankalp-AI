@@ -230,6 +230,10 @@
       coordinates: [28.6139, 77.2090], h3Index: '8c1f3d9b5a7f1e2',
       category: 'Urban Transport', urgency: 'Critical',
       ministry: 'Ministry of Housing and Urban Affairs' },
+    { keywords: ['lucknow', 'लखनऊ'], locationName: 'Lucknow, Uttar Pradesh',
+      coordinates: [26.8467, 80.9462], h3Index: '893d8dcd553ffff',
+      category: 'General Infrastructure', urgency: 'Medium',
+      ministry: 'Ministry of Housing and Urban Affairs' },
     { keywords: ['sitapur', 'सीतापुर'], locationName: 'Sitapur',
       coordinates: [27.5728, 80.6853], h3Index: '8c3b2e1c0a9f5d7',
       category: 'Rural Roads', urgency: 'High',
@@ -385,12 +389,14 @@
     var el = $('currentLocationBadge');
     if (!el) { return; }
     var loc = appState.currentLocation || {};
-    var coords = loc.coordinates || appState.coordinates || [];
+    var hasCoordinates = Array.isArray(loc.coordinates) && loc.coordinates.length === 2;
     setHTML(el, [
       '<span class="loc-badge-title">📍 Active Comparative Location</span>',
       '<span class="loc-badge-name">' + (loc.locationName || appState.location) + '</span>',
-      '<span class="loc-badge-meta">' + coords.map(function (n) { return Number(n).toFixed(4); }).join(', ') +
-        ' · ' + (loc.crs || CRS_EPSG4326) + ' · H3 ' + (loc.h3Index || appState.h3Index || H3_DELTA_CELL) + '</span>',
+      '<span class="loc-badge-meta">' + (hasCoordinates
+        ? loc.coordinates.map(function (n) { return Number(n).toFixed(4); }).join(', ') +
+          ' · ' + (loc.crs || CRS_EPSG4326) + ' · H3 ' + (loc.h3Index || 'unavailable')
+        : 'Coordinates unavailable — location needs geocoding') + '</span>',
       '<span class="loc-badge-meta">📜 ' + (loc.historicalTileTime || TILE_TIME_HISTORICAL) +
         ' → 🔴 ' + (loc.currentTileTime || TILE_TIME_CURRENT) + '</span>'
     ].join(''));
@@ -683,7 +689,7 @@
         appState.location = incident.location_name || appState.location;
         appState.category = incident.category || appState.category;
         appState.urgency = incident.urgency || appState.urgency;
-        appState.h3Index = incident.h3_index || appState.h3Index;
+        appState.h3Index = incident.h3_index || null;
         appState.status = incident.status || appState.status;
         appState.ministry = incident.assigned_ministry || appState.ministry;
         appState.targetDate = incident.target_completion_date || appState.targetDate;
@@ -728,12 +734,19 @@
             coordinates: incidentTarget.coordinates,
             h3Index: incidentTarget.h3Index
           });
-        } else {
+        } else if (incidentCoords) {
           flyTo(appState.coordinates, appState.zoom);
           updateCurrentLocation({
             locationName: appState.location,
             coordinates: appState.coordinates,
             h3Index: appState.h3Index
+          });
+        } else {
+          appState.h3Index = null;
+          updateCurrentLocation({
+            locationName: appState.location,
+            coordinates: null,
+            h3Index: null
           });
         }
       })
@@ -982,11 +995,15 @@
   // mirrored onto window.appState.currentLocation (DPR + PDF binding).
   function updateCurrentLocation(location) {
     if (!location) { return null; }
-    var coords = normalizeWgs84(location.coordinates) || appState.coordinates;
+    var coords = location.coordinates === null
+      ? null
+      : (normalizeWgs84(location.coordinates) || appState.coordinates);
     var next = {
       locationName: location.locationName || appState.location,
       coordinates: coords,
-      h3Index: location.h3Index || appState.h3Index || H3_DELTA_CELL,
+      h3Index: location.h3Index === null
+        ? null
+        : (location.h3Index || appState.h3Index || H3_DELTA_CELL),
       crs: CRS_EPSG4326,
       // Temporal rasters bound to this selection.
       historicalTileTime: TILE_TIME_HISTORICAL,
@@ -1808,100 +1825,6 @@
 
   // ── SCAN INCIDENT (image → transcript) ──────────────────────────
   var scanBtn = $('scanIncidentButton');
-  function fileToDataUrl(file) {
-    return new Promise(function (resolve, reject) {
-      if (!file) { resolve(null); return; }
-      var reader = new FileReader();
-      reader.onload = function () { resolve(reader.result); };
-      reader.onerror = function () { reject(new Error('Could not read image file.')); };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  function applyResolutionIncident(incident) {
-    if (!incident) { return; }
-    appState.latestIncident = incident;
-    appState.status = incident.status || appState.status;
-    appState.ministry = incident.assigned_ministry || appState.ministry;
-    appState.urgency = incident.urgency || appState.urgency;
-    renderEntityCard();
-    renderDprPanel(incident);
-  }
-
-  function submitProofOfResolution() {
-    var btn = $('submitResolutionButton');
-    var result = $('resolutionGateResult');
-    var photoInput = $('resolutionPhotoInput');
-    var originalInput = $('originalPhotoInput');
-    var incident = appState.latestIncident;
-    if (!incident || !incident.id) {
-      if (result) { result.textContent = 'Ingest an incident first so the resolution can bind to a ticket.'; }
-      return;
-    }
-    var file = photoInput && photoInput.files && photoInput.files[0];
-    if (!file) {
-      if (result) { result.textContent = 'Choose a geotagged resolution photo.'; }
-      return;
-    }
-    if (btn) { btn.disabled = true; btn.textContent = 'Auditing EXIF + structure...'; }
-    if (result) { result.textContent = 'Running anti-fraud proof-of-resolution gate...'; }
-
-    var originalFile = originalInput && originalInput.files && originalInput.files[0];
-    Promise.all([fileToDataUrl(file), fileToDataUrl(originalFile)])
-      .then(function (images) {
-        return fetch(API_BASE + '/resolutions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            incidentId: incident.id,
-            h3Index: incident.h3_index || appState.h3Index || H3_DELTA_CELL,
-            image: images[0],
-            originalImage: images[1] || incident.original_photo || null
-          })
-        }).then(function (res) {
-          return res.json().catch(function () { return {}; }).then(function (body) {
-            body._httpStatus = res.status;
-            body._ok = res.ok;
-            return body;
-          });
-        });
-      })
-      .then(function (body) {
-        if (body && body.status === 'REJECTED_LOCATION_MISMATCH') {
-          if (result) {
-            setHTML(result, '<div style="color:#fca5a5;font-weight:700;">REJECTED_LOCATION_MISMATCH</div>' +
-              '<div style="margin-top:6px;">' + (body.error || 'Photo captured outside incident zone.') + '</div>');
-          }
-          return;
-        }
-        if (!body || body._ok === false) {
-          throw new Error((body && (body.error || body.details)) || 'Resolution audit failed.');
-        }
-        var updated = (body.data) || incident;
-        applyResolutionIncident(updated);
-        var audit = body.audit || updated.resolution_audit || {};
-        if (body.status === 'PENDING_MANUAL_AUDIT') {
-          if (result) {
-            setHTML(result, '<div style="color:#fbbf24;font-weight:700;">PENDING_MANUAL_AUDIT</div>' +
-              '<div style="margin-top:6px;">Escalated to District Collector Review. Structural match ' +
-              (audit.structural_similarity != null ? Math.round(audit.structural_similarity * 100) + '%' : '--') +
-              (audit.rubble_detected ? '; rubble still detected.' : '.') + '</div>');
-          }
-          return;
-        }
-        if (result) {
-          setHTML(result, '<div class="proof-audit-badge is-visible" style="margin:0;">' +
-            '<span class="audit-check">✓</span><span>' + proofAuditLabel(updated) + '</span></div>');
-        }
-      })
-      .catch(function (err) {
-        if (result) { result.textContent = (err && err.message) || 'Resolution audit failed.'; }
-      })
-      .then(function () {
-        if (btn) { btn.disabled = false; btn.textContent = 'Submit Proof of Resolution'; }
-      });
-  }
-
   function initScanButton() {
     if (!scanBtn) { return; }
     scanBtn.addEventListener('click', function () {
@@ -2164,7 +2087,7 @@
     appState.location = incident.location_name || appState.location;
     appState.category = incident.category || appState.category;
     appState.urgency = incident.urgency || appState.urgency;
-    appState.h3Index = incident.h3_index || appState.h3Index;
+    appState.h3Index = incident.h3_index || null;
     appState.status = incident.status || appState.status;
     appState.ministry = incident.assigned_ministry || appState.ministry;
     appState.targetDate = incident.target_completion_date || appState.targetDate;
@@ -2209,12 +2132,18 @@
         coordinates: incidentTarget.coordinates,
         h3Index: incidentTarget.h3Index
       });
-    } else {
+    } else if (incidentCoords) {
       flyTo(appState.coordinates, appState.zoom);
       updateCurrentLocation({
         locationName: appState.location,
         coordinates: appState.coordinates,
         h3Index: appState.h3Index
+      });
+    } else {
+      updateCurrentLocation({
+        locationName: appState.location,
+        coordinates: null,
+        h3Index: null
       });
     }
   }
@@ -2274,9 +2203,6 @@
 
     if (satBtn) { satBtn.addEventListener('click', runSatelliteVerification); }
     if (pdfBtn) { pdfBtn.addEventListener('click', exportDpr); }
-    var resolutionBtn = $('submitResolutionButton');
-    if (resolutionBtn) { resolutionBtn.addEventListener('click', submitProofOfResolution); }
-
     // Hydrate from persisted database records on load.
     loadIncidents();
 

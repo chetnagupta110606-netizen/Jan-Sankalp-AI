@@ -22,6 +22,25 @@ function safeBody(req) {
   return (req && req.body && typeof req.body === 'object') ? req.body : {};
 }
 
+function resolveIngestRegion(parsed, body) {
+  if (parsed.region) return parsed.region;
+  if (parsed.locationName) {
+    return resolveRegion({ locationName: parsed.locationName });
+  }
+  if (body.locationName) {
+    return resolveRegion({
+      locationName: body.locationName,
+      coordinates: Array.isArray(body.coordinates) ? body.coordinates : null
+    });
+  }
+  if (body.h3Index) return resolveRegion({ h3Index: body.h3Index });
+  return resolveRegion({
+    coordinates: Array.isArray(body.coordinates) ? body.coordinates : null,
+    latitude: body.latitude,
+    longitude: body.longitude
+  });
+}
+
 async function ingest(req, res) {
   try {
     const body = safeBody(req);
@@ -38,24 +57,10 @@ async function ingest(req, res) {
     const parsed = parseTranscript(transcript);
 
     // 2. Resolve region.
-    //    Explicit city names spoken in the transcript (e.g. "Jaipur") MUST
-    //    override any default coordinates the client sends (e.g. Delhi).
-    //    Priority: parsed city region → explicit h3 → explicit locationName
-    //              → client coordinates → catalogue fallback.
-    let region;
-    if (parsed.region) {
-      region = parsed.region;
-    } else if (body.h3Index) {
-      region = resolveRegion({ h3Index: body.h3Index });
-    } else if (body.locationName) {
-      region = resolveRegion({ locationName: body.locationName });
-    } else {
-      region = resolveRegion({
-        coordinates: Array.isArray(body.coordinates) ? body.coordinates : null,
-        latitude: body.latitude,
-        longitude: body.longitude
-      });
-    }
+    //    Text-derived locations must override stale client coordinates (often
+    //    the initial Delhi map centre). Unknown cities retain their name and
+    //    are left ungeocoded rather than being assigned a false location.
+    const region = resolveIngestRegion(parsed, body);
 
     const category = parsed.region ? parsed.region.category : (body.category || parsed.category || region.category);
     const urgency = parsed.region ? parsed.region.urgency : (body.urgency || parsed.urgency || region.urgency);
@@ -67,7 +72,7 @@ async function ingest(req, res) {
 
     const civicValidation = await validateCivicImage(
       body.original_photo || body.originalImage || body.image || null,
-      { transcript, category, locationName: body.locationName || region.label, body, region }
+      { transcript, category, locationName: parsed.locationName || body.locationName || region.label, body, region }
     );
 
     if (!civicValidation.isValid) {
@@ -101,7 +106,7 @@ async function ingest(req, res) {
       h3_index: region.h3Index,
       latitude: region.centerLat,
       longitude: region.centerLng,
-      location_name: body.locationName || region.label
+      location_name: parsed.locationName || body.locationName || region.label
     };
 
     const deduplicationCheck = await checkSpatialDuplication(tempIncident);
@@ -130,7 +135,7 @@ async function ingest(req, res) {
       category,
       urgency,
       status: body.status || 'Under Survey',
-      location_name: body.locationName || region.label,
+      location_name: parsed.locationName || body.locationName || region.label,
       h3_index: region.h3Index,
       latitude: region.centerLat,
       longitude: region.centerLng,
@@ -159,4 +164,4 @@ async function ingest(req, res) {
   }
 }
 
-module.exports = { ingest };
+module.exports = { ingest, resolveIngestRegion };

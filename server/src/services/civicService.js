@@ -25,6 +25,21 @@ const URBAN_REGIONS = [
     summary: 'Urban transport remediation and integrated mobility infrastructure enhancement for the capital corridor.'
   },
   {
+    label: 'Lucknow, Uttar Pradesh',
+    locationName: 'Lucknow, Uttar Pradesh',
+    category: 'General Infrastructure',
+    urgency: 'Medium',
+    targetMinistry: 'Ministry of Housing and Urban Affairs',
+    h3Index: '893d8dcd553ffff',
+    centerLat: 26.8467,
+    centerLng: 80.9462,
+    budget: 250000000,
+    impactedCitizens: 500000,
+    priorityIndex: 80,
+    alignmentScore: 85,
+    summary: 'Citizen-reported civic deficiency in Lucknow requires coordinated inspection.'
+  },
+  {
     label: 'Sitapur',
     locationName: 'Sitapur',
     category: 'Rural Roads',
@@ -123,6 +138,7 @@ const URGENCY_KEYWORDS = [
 
 const LOCATION_KEYWORDS = [
   { pattern: ['new delhi', 'delhi', 'दिल्ली'], region: 'New Delhi' },
+  { pattern: ['lucknow', 'लखनऊ'], region: 'Lucknow, Uttar Pradesh' },
   { pattern: ['sitapur', 'सीतापुर'], region: 'Sitapur' },
   { pattern: ['kalahandi', 'कालाहांडी'], region: 'Kalahandi' },
   { pattern: ['wayanad', 'वायनाड'], region: 'Wayanad' },
@@ -131,6 +147,47 @@ const LOCATION_KEYWORDS = [
   { pattern: ['jaipur', 'जयपुर', 'subhash chowk', 'kishanpole', 'kishan pole',
               'kishanpol', 'सुभाष चौक', 'किशनपोल'], region: 'Jaipur, Rajasthan' }
 ];
+
+const LOCATION_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'around', 'at', 'before', 'because', 'but',
+  'during', 'for', 'from', 'has', 'in', 'is', 'near', 'of', 'on', 'or',
+  'the', 'through', 'to', 'was', 'were', 'with', 'without', 'after',
+  'problem', 'issue', 'road', 'street', 'drain', 'water', 'city'
+]);
+
+function extractUserLocation(transcript) {
+  const text = String(transcript || '');
+  const explicit = text.match(/\b(?:location|city)\s*[:=-]\s*([^,;.!?\n]+)/i);
+  const contextual = explicit
+    ? explicit[1]
+    : (text.match(/\b(?:in|at|near|around)\s+(?:(?:the\s+)?city\s+of\s+)?([^,;.!?\n]+)/i) || [])[1];
+  let candidate = contextual;
+
+  if (!candidate) {
+    const words = text.trim().split(/\s+/);
+    const mentionsIssue = CATEGORY_KEYWORDS.some((entry) =>
+      entry.keywords.some((keyword) => text.toLowerCase().includes(keyword))
+    ) || URGENCY_KEYWORDS.some((entry) =>
+      entry.keywords.some((keyword) => text.toLowerCase().includes(keyword))
+    ) || /\b(?:problem|issue|repair|damage|damaged|broken|report|complaint|request)\b/i.test(text);
+    if (words.length > 0 && words.length <= 3 && !/\d/.test(text) && !mentionsIssue) {
+      candidate = text;
+    }
+  }
+  if (!candidate) return null;
+
+  const locationWords = candidate.trim().split(/\s+/);
+  const selectedWords = [];
+  for (const word of locationWords) {
+    const normalized = word.replace(/^[^\p{L}]+|[^\p{L}.'-]+$/gu, '').toLowerCase();
+    if (!normalized || LOCATION_STOP_WORDS.has(normalized)) break;
+    selectedWords.push(word.replace(/^[^\p{L}]+|[^\p{L}.'-]+$/gu, ''));
+    if (selectedWords.length === 3) break;
+  }
+
+  const locationName = selectedWords.join(' ').trim();
+  return locationName || null;
+}
 
 /**
  * Infer category, urgency, ministry and location from a transcript.
@@ -156,12 +213,15 @@ function parseTranscript(transcript = '') {
   const matchedRegion = locationMatch
     ? URBAN_REGIONS.find((r) => r.locationName === locationMatch.region || r.label === locationMatch.region)
     : null;
+  const locationName = matchedRegion
+    ? matchedRegion.locationName
+    : extractUserLocation(transcript);
 
   return {
     category: matchedRegion ? matchedRegion.category : (categoryMatch ? categoryMatch.category : 'General Infrastructure'),
     ministry: matchedRegion ? matchedRegion.targetMinistry : (categoryMatch ? categoryMatch.ministry : 'Ministry of Housing and Urban Affairs'),
     urgency: matchedRegion ? matchedRegion.urgency : (urgencyMatch ? urgencyMatch.urgency : 'Medium'),
-    locationName: matchedRegion ? matchedRegion.locationName : null,
+    locationName,
     region: matchedRegion ? { ...matchedRegion } : null
   };
 }
@@ -224,6 +284,22 @@ function resolveRegion(input = {}) {
       );
       if (byRegion) return { ...byRegion };
     }
+    const unGeocodedName = String(locationName).trim();
+    return {
+      label: unGeocodedName,
+      locationName: unGeocodedName,
+      category: 'General Infrastructure',
+      urgency: 'Medium',
+      targetMinistry: 'Ministry of Housing and Urban Affairs',
+      h3Index: null,
+      centerLat: null,
+      centerLng: null,
+      budget: 250000000,
+      impactedCitizens: 500000,
+      priorityIndex: 80,
+      alignmentScore: 85,
+      summary: `Citizen-reported civic deficiency in ${unGeocodedName} requires coordinated inspection.`
+    };
   }
 
   if (Number.isFinite(lat) && Number.isFinite(lng)) {
