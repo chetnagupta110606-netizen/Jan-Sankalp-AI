@@ -26,6 +26,8 @@ const INCIDENTS_SCHEMA = `
     latitude               DOUBLE PRECISION,
     longitude              DOUBLE PRECISION,
     assigned_ministry      VARCHAR(255),
+    assigned_contractor    VARCHAR(255),
+    deadline               TIMESTAMP,
     target_completion_date DATE,
     priority               VARCHAR(128),
     original_photo         TEXT,
@@ -33,6 +35,8 @@ const INCIDENTS_SCHEMA = `
     resolution_proof_path  TEXT,
     resolution_notes       TEXT,
     resolved_at            TIMESTAMP,
+    penalty_status         VARCHAR(64) DEFAULT 'On Track',
+    penalty_tier           VARCHAR(128),
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -55,12 +59,16 @@ async function runMigration() {
   if (db.mode === 'postgres' && db.pool) {
     await db.query(INCIDENTS_SCHEMA);
     await db.query(`
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS assigned_contractor VARCHAR(255);
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS deadline TIMESTAMP;
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS priority VARCHAR(128);
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS original_photo TEXT;
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS resolution_audit JSONB;
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS resolution_proof_path TEXT;
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS penalty_status VARCHAR(64) DEFAULT 'On Track';
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS penalty_tier VARCHAR(128);
       ALTER TABLE incidents DROP CONSTRAINT IF EXISTS incidents_status_check;
     `);
     console.log('[migrate] PostgreSQL `incidents` table ensured.');

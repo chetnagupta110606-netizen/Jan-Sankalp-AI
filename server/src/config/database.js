@@ -94,13 +94,21 @@ class FileStore {
       latitude: data.latitude != null && Number.isFinite(Number(data.latitude)) ? Number(data.latitude) : null,
       longitude: data.longitude != null && Number.isFinite(Number(data.longitude)) ? Number(data.longitude) : null,
       assigned_ministry: data.assigned_ministry || null,
+      assignedContractor: data.assignedContractor || data.assigned_contractor || null,
+      assigned_contractor: data.assignedContractor || data.assigned_contractor || null,
+      deadline: data.deadline || data.deadline_at || null,
+      resolvedAt: data.resolvedAt || data.resolved_at || null,
+      resolved_at: data.resolvedAt || data.resolved_at || null,
+      penaltyStatus: data.penaltyStatus || data.penalty_status || 'On Track',
+      penalty_status: data.penaltyStatus || data.penalty_status || 'On Track',
+      penaltyTier: data.penaltyTier || data.penalty_tier || null,
+      penalty_tier: data.penaltyTier || data.penalty_tier || null,
       target_completion_date: data.target_completion_date || null,
       priority: data.priority || null,
       original_photo: data.original_photo || null,
       resolution_audit: data.resolution_audit || null,
       resolution_proof_path: data.resolution_proof_path || data.proof_file_path || null,
       resolution_notes: data.resolution_notes || data.notes || null,
-      resolved_at: data.resolved_at || null,
       upvote_count: Number(data.upvote_count) || 0,
       affected_citizens_count: Number(data.affected_citizens_count) || 0,
       created_at: data.created_at || new Date().toISOString()
@@ -170,10 +178,11 @@ const db = {
       const sql = `
         INSERT INTO incidents
           (transcript, category, urgency, status, location_name, h3_index,
-           latitude, longitude, assigned_ministry, target_completion_date,
-           priority, original_photo, resolution_audit, resolution_proof_path,
-           resolution_notes, resolved_at, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, COALESCE($17, NOW()))
+           latitude, longitude, assigned_ministry, assigned_contractor, deadline,
+           target_completion_date, priority, original_photo, resolution_audit,
+           resolution_proof_path, resolution_notes, resolved_at, penalty_status,
+           penalty_tier, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, COALESCE($21, NOW()))
         RETURNING *;
       `;
       const params = [
@@ -186,13 +195,17 @@ const db = {
         data.latitude != null && Number.isFinite(Number(data.latitude)) ? Number(data.latitude) : null,
         data.longitude != null && Number.isFinite(Number(data.longitude)) ? Number(data.longitude) : null,
         data.assigned_ministry || null,
+        data.assignedContractor || data.assigned_contractor || null,
+        data.deadline || data.deadline_at || null,
         data.target_completion_date || null,
         data.priority || null,
         data.original_photo || null,
         data.resolution_audit ? JSON.stringify(data.resolution_audit) : null,
         data.resolution_proof_path || data.proof_file_path || null,
         data.resolution_notes || data.notes || null,
-        data.resolved_at || null,
+        data.resolvedAt || data.resolved_at || null,
+        data.penaltyStatus || data.penalty_status || 'On Track',
+        data.penaltyTier || data.penalty_tier || null,
         data.created_at || null
       ];
       const { rows } = await this.pool.query(sql, params);
@@ -223,20 +236,26 @@ const db = {
         `UPDATE incidents
            SET status = COALESCE($2, status),
                assigned_ministry = COALESCE($3, assigned_ministry),
-               target_completion_date = COALESCE($4, target_completion_date),
-               urgency = COALESCE($5, urgency),
-               priority = COALESCE($6, priority),
-               original_photo = COALESCE($7, original_photo),
-               resolution_audit = COALESCE($8::jsonb, resolution_audit),
-               resolution_proof_path = COALESCE($9, resolution_proof_path),
-               resolution_notes = COALESCE($10, resolution_notes),
-               resolved_at = COALESCE($11, resolved_at)
+               assigned_contractor = COALESCE($4, assigned_contractor),
+               deadline = COALESCE($5, deadline),
+               target_completion_date = COALESCE($6, target_completion_date),
+               urgency = COALESCE($7, urgency),
+               priority = COALESCE($8, priority),
+               original_photo = COALESCE($9, original_photo),
+               resolution_audit = COALESCE($10::jsonb, resolution_audit),
+               resolution_proof_path = COALESCE($11, resolution_proof_path),
+               resolution_notes = COALESCE($12, resolution_notes),
+               resolved_at = COALESCE($13, resolved_at),
+               penalty_status = COALESCE($14, penalty_status),
+               penalty_tier = COALESCE($15, penalty_tier)
          WHERE id = $1
          RETURNING *;`,
         [
           id,
           patch.status || null,
           patch.assigned_ministry || null,
+          patch.assignedContractor || patch.assigned_contractor || null,
+          patch.deadline || patch.deadline_at || null,
           patch.target_completion_date || null,
           patch.urgency || null,
           patch.priority || null,
@@ -244,7 +263,9 @@ const db = {
           patch.resolution_audit ? JSON.stringify(patch.resolution_audit) : null,
           patch.resolution_proof_path || patch.proof_file_path || null,
           patch.resolution_notes || patch.notes || null,
-          patch.resolved_at || null
+          patch.resolved_at || patch.resolvedAt || null,
+          patch.penaltyStatus || patch.penalty_status || null,
+          patch.penaltyTier || patch.penalty_tier || null
         ]
       );
       return rows[0] || null;

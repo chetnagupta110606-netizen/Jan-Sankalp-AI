@@ -17,6 +17,7 @@ const db = require('./config/database');
 const { runMigration } = require('./config/migrate');
 const apiRoutes = require('./routes/apiRoutes');
 const { startEscalationScheduler } = require('./services/escalationService');
+const { startContractorSlaScheduler } = require('./services/contractorSlaService');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -72,11 +73,17 @@ async function start() {
     console.warn('[server] Startup DB init warning (continuing):', err.message);
   }
 
-  // Start escalation scheduler
+  // Start background audit schedulers
   try {
     startEscalationScheduler(60); // Check every 60 minutes
   } catch (err) {
     console.warn('[server] Escalation scheduler warning (continuing):', err.message);
+  }
+
+  try {
+    startContractorSlaScheduler(15); // Check every 15 minutes
+  } catch (err) {
+    console.warn('[server] Contractor SLA scheduler warning (continuing):', err.message);
   }
 
   const server = app.listen(PORT, () => {
@@ -86,6 +93,7 @@ async function start() {
     console.log(`  API base        : http://localhost:${PORT}/api/v1`);
     console.log(`  Persistence mode: ${db.mode}`);
     console.log(`  Escalation scheduler: Active (60min intervals)`);
+    console.log(`  Contractor SLA scheduler: Active (15min intervals)`);
     console.log('════════════════════════════════════════════════════════');
     console.log('');
   });

@@ -36,6 +36,33 @@ function MapViewUpdater({
   return null;
 }
 
+const ledgerRows = [
+  {
+    contractor: 'Asha Builders',
+    completionRate: 82,
+    activeAssignments: 6,
+    slaBreaches: 1,
+    penaltyStatus: 'SLA Breached',
+    latestDeadline: '2026-09-26T18:00:00.000Z'
+  },
+  {
+    contractor: 'CityWorks Infra',
+    completionRate: 91,
+    activeAssignments: 4,
+    slaBreaches: 0,
+    penaltyStatus: 'On Track',
+    latestDeadline: '2026-09-28T18:00:00.000Z'
+  },
+  {
+    contractor: 'Rajasthan Roads Co.',
+    completionRate: 68,
+    activeAssignments: 9,
+    slaBreaches: 2,
+    penaltyStatus: 'SLA Breached',
+    latestDeadline: '2026-09-24T18:00:00.000Z'
+  }
+];
+
 export default function App() {
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number]>([28.6139, 77.209]);
@@ -111,6 +138,69 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-6xl px-4 py-6">
+        <section className="mb-6 rounded-2xl border border-amber-500/30 bg-slate-900 p-5 shadow-xl shadow-slate-950/40">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-amber-300">Public Transparency</p>
+              <h2 className="mt-2 text-2xl font-bold text-white">Contractor Accountability Ledger</h2>
+            </div>
+            <div className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+              3 active penalties
+            </div>
+          </div>
+
+          <div className="mb-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-700 bg-slate-950 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active contractors</p>
+              <p className="mt-2 text-3xl font-bold text-cyan-300">8</p>
+            </div>
+            <div className="rounded-xl border border-slate-700 bg-slate-950 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Avg. completion</p>
+              <p className="mt-2 text-3xl font-bold text-emerald-300">81%</p>
+            </div>
+            <div className="rounded-xl border border-slate-700 bg-slate-950 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">SLA breaches</p>
+              <p className="mt-2 text-3xl font-bold text-rose-300">3</p>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-slate-700">
+            <table className="min-w-full divide-y divide-slate-700 text-left text-sm">
+              <thead className="bg-slate-950/90 text-slate-300">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Contractor</th>
+                  <th className="px-4 py-3 font-medium">Completion</th>
+                  <th className="px-4 py-3 font-medium">Active tasks</th>
+                  <th className="px-4 py-3 font-medium">Penalty status</th>
+                  <th className="px-4 py-3 font-medium">Deadline</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800 bg-slate-900 text-slate-100">
+                {ledgerRows.map((row) => (
+                  <tr key={row.contractor}>
+                    <td className="px-4 py-3 font-medium text-white">{row.contractor}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-700">
+                          <div className="h-full rounded-full bg-emerald-400" style={{ width: `${row.completionRate}%` }} />
+                        </div>
+                        <span>{row.completionRate}%</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">{row.activeAssignments}</td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] ${row.penaltyStatus === 'SLA Breached' ? 'bg-rose-500/10 text-rose-300 border border-rose-500/30' : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'}`}>
+                        {row.penaltyStatus}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-300">{new Date(row.latestDeadline).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <header className="mb-5 rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-xl shadow-slate-950/40">
           <div className="flex items-center justify-between gap-4">
             <div>

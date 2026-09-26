@@ -14,6 +14,10 @@ function toIncidentPayload(row = {}) {
   if (!row) return null;
   const lat = row.latitude == null ? NaN : Number(row.latitude);
   const lng = row.longitude == null ? NaN : Number(row.longitude);
+  const deadlineValue = row.deadline || row.deadline_at || null;
+  const resolvedAtValue = row.resolvedAt || row.resolved_at || null;
+  const penaltyStatusValue = row.penaltyStatus || row.penalty_status || 'On Track';
+  const penaltyTierValue = row.penaltyTier || row.penalty_tier || null;
   return {
     id: row.id,
     transcript: row.transcript || '',
@@ -26,13 +30,21 @@ function toIncidentPayload(row = {}) {
     longitude: Number.isFinite(lng) ? lng : null,
     coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null,
     assigned_ministry: row.assigned_ministry || 'Ministry of Housing and Urban Affairs',
+    assignedContractor: row.assignedContractor || row.assigned_contractor || null,
+    assigned_contractor: row.assignedContractor || row.assigned_contractor || null,
+    deadline: deadlineValue ? new Date(deadlineValue).toISOString() : null,
     target_completion_date: normalizeDate(row.target_completion_date),
     priority: row.priority || null,
     original_photo: row.original_photo || null,
     resolution_audit: parseJson(row.resolution_audit),
     resolution_proof_path: row.resolution_proof_path || row.proof_file_path || null,
     resolution_notes: row.resolution_notes || row.notes || null,
-    resolved_at: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+    resolvedAt: resolvedAtValue ? new Date(resolvedAtValue).toISOString() : null,
+    resolved_at: resolvedAtValue ? new Date(resolvedAtValue).toISOString() : null,
+    penaltyStatus: penaltyStatusValue,
+    penalty_status: penaltyStatusValue,
+    penaltyTier: penaltyTierValue,
+    penalty_tier: penaltyTierValue,
     upvote_count: Number(row.upvote_count) || 0,
     affected_citizens_count: Number(row.affected_citizens_count) || 0,
     created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()

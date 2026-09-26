@@ -12,12 +12,14 @@ CREATE TABLE IF NOT EXISTS incidents (
   category               VARCHAR(255),
   urgency                VARCHAR(64) DEFAULT 'Medium',
   status                 VARCHAR(64) NOT NULL DEFAULT 'Pending Survey'
-    CHECK (status IN ('Pending Survey', 'Under Survey', 'Scheduled for Action', 'Action Taken / Resolved', 'Resolved')),
+    CHECK (status IN ('Pending Survey', 'Under Survey', 'Scheduled for Action', 'Action Taken / Resolved', 'Resolved', 'SLA Breached', 'Assigned')),
   location_name          VARCHAR(255),
   h3_index               VARCHAR(128),
   latitude               DOUBLE PRECISION,
   longitude              DOUBLE PRECISION,
   assigned_ministry      VARCHAR(255),
+  assigned_contractor    VARCHAR(255),
+  deadline               TIMESTAMP,
   target_completion_date DATE,
   priority               VARCHAR(128),
   original_photo         TEXT,
@@ -25,6 +27,8 @@ CREATE TABLE IF NOT EXISTS incidents (
   resolution_proof_path  TEXT,
   resolution_notes       TEXT,
   resolved_at            TIMESTAMP,
+  penalty_status         VARCHAR(64) DEFAULT 'On Track',
+  penalty_tier           VARCHAR(128),
   created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

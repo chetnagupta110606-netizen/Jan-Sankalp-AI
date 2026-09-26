@@ -65,6 +65,8 @@ async function ingest(req, res) {
     const category = parsed.region ? parsed.region.category : (body.category || parsed.category || region.category);
     const urgency = parsed.region ? parsed.region.urgency : (body.urgency || parsed.urgency || region.urgency);
     const ministry = parsed.region ? parsed.region.targetMinistry : (body.assigned_ministry || parsed.ministry || region.targetMinistry);
+    const assignedContractor = body.assignedContractor || body.assigned_contractor || body.contractor || 'Municipal Works Contractor';
+    const deadline = body.deadline || body.deadline_at || new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
     // 3. Compute SLA target completion date.
     const targetCompletionDate =
@@ -140,8 +142,12 @@ async function ingest(req, res) {
       latitude: region.centerLat,
       longitude: region.centerLng,
       assigned_ministry: ministry,
+      assignedContractor,
+      deadline,
       target_completion_date: targetCompletionDate,
-      original_photo: body.original_photo || body.originalImage || body.image || null
+      original_photo: body.original_photo || body.originalImage || body.image || null,
+      penaltyStatus: 'On Track',
+      penaltyTier: null
     });
 
     // 6. Check for vulnerability cluster (early-warning cascading risk)

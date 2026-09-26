@@ -21,7 +21,7 @@ const { verifySatellite } = require('../controllers/satelliteController');
 const { generateDpr, getDpr, getDprById } = require('../controllers/dprController');
 const { validateReportSubmission, downloadIncidentCsv } = require('../controllers/reportController');
 const { submitResolution, resolveIncident } = require('../controllers/resolutionController');
-const { getAnalyticsMetrics } = require('../controllers/analyticsController');
+const { getAnalyticsMetrics, getContractorLedger } = require('../controllers/analyticsController');
 const { requireOfficerOrAdmin } = require('../middleware/requireOfficerOrAdmin');
 
 const router = express.Router();
@@ -54,6 +54,7 @@ router.get('/health', (req, res) => {
 router.post('/ingest', ingest);
 router.post('/reports/validate', validateReportSubmission);
 router.get('/analytics/metrics', getAnalyticsMetrics);
+router.get('/analytics/contractor-ledger', getContractorLedger);
 router.get('/reports/download', downloadIncidentCsv);
 
 // ── Geospatial ─────────────────────────────────────────────────────
