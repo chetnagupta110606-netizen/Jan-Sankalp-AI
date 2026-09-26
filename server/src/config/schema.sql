@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     CHECK (status IN ('Pending Survey', 'Under Survey', 'Scheduled for Action', 'Action Taken / Resolved', 'Resolved', 'SLA Breached', 'Assigned')),
   location_name          VARCHAR(255),
   h3_index               VARCHAR(128),
+  source                 VARCHAR(128) DEFAULT 'Web Portal',
   latitude               DOUBLE PRECISION,
   longitude              DOUBLE PRECISION,
   assigned_ministry      VARCHAR(255),
@@ -43,3 +44,22 @@ CREATE INDEX IF NOT EXISTS idx_incidents_ministry
 
 CREATE INDEX IF NOT EXISTS idx_incidents_created_at
   ON incidents (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS whistleblower_reports (
+  id              SERIAL PRIMARY KEY,
+  token_hash      TEXT NOT NULL UNIQUE,
+  category        VARCHAR(128) NOT NULL DEFAULT 'General',
+  report_summary  TEXT NOT NULL,
+  location_hint   VARCHAR(255),
+  evidence        TEXT,
+  status          VARCHAR(64) NOT NULL DEFAULT 'Submitted',
+  status_message  TEXT,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_whistleblower_status
+  ON whistleblower_reports (status);
+
+CREATE INDEX IF NOT EXISTS idx_whistleblower_created_at
+  ON whistleblower_reports (created_at DESC);

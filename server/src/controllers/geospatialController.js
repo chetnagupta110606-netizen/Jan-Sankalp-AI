@@ -133,8 +133,12 @@ async function updateClusterStatus(req, res) {
     const existing = await IncidentModel.findById(id);
     const previousStatus = existing ? existing.status : null;
 
+    const nextStatus = status === 'Resolved' || status === 'Action Taken / Resolved'
+      ? 'Pending Citizen Verification'
+      : (status || null);
+
     const updated = await IncidentModel.update(id, {
-      status: status || null,
+      status: nextStatus,
       assigned_ministry: assigned_ministry || null,
       target_completion_date: target_completion_date || null
     });

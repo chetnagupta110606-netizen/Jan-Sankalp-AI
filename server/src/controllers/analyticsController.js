@@ -7,6 +7,7 @@
  */
 
 const db = require('../config/database');
+const { buildTransparencyLedgerReport } = require('../services/transparencyLedgerService');
 
 function normalizeStatus(status = '') {
   const value = String(status || '').trim();
@@ -103,6 +104,38 @@ async function getContractorLedger(req, res) {
   }
 }
 
+async function getTransparencyLedger(req, res) {
+  try {
+    const dbLayer = (req && req.db) || db;
+    const incidents = await dbLayer.getAllIncidents();
+    const report = buildTransparencyLedgerReport(incidents);
+    const payload = {
+      success: true,
+      generatedAt: report.generatedAt,
+      summary: report.summary,
+      ledger: report.ledger,
+      reportText: report.reportText,
+      title: 'RTI Public Portal & Transparency Ledger'
+    };
+
+    if (res && typeof res.json === 'function') {
+      return res.json(payload);
+    }
+
+    return payload;
+  } catch (error) {
+    console.error('[analytics] Transparency ledger failed:', error && error.message);
+    if (res && typeof res.status === 'function') {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to load the transparency ledger.',
+        details: error && error.message
+      });
+    }
+    return { success: false, error: 'Failed to load the transparency ledger.', details: error && error.message };
+  }
+}
+
 async function getAnalyticsMetrics(req, res) {
   try {
     const dbLayer = (req && req.db) || db;
@@ -164,4 +197,4 @@ async function getAnalyticsMetrics(req, res) {
   }
 }
 
-module.exports = { getAnalyticsMetrics, getContractorLedger };
+module.exports = { getAnalyticsMetrics, getContractorLedger, getTransparencyLedger };

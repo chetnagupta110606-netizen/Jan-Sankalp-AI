@@ -9,6 +9,7 @@
  */
 
 const IncidentModel = require('../models/incidentModel');
+const proofService = require('../services/proofOfResolutionService');
 const {
   TARGET_H3_CELL,
   MAX_DISTANCE_METERS,
@@ -18,11 +19,147 @@ const {
   haversineMeters,
   resolveHexCenter,
   analyzeStructure
-} = require('../services/proofOfResolutionService');
-const { auditResolutionPhotos } = require('../services/photoAuditService');
+} = proofService;
+const defaultExtractExif = proofService.extractExif;
+const {
+  auditResolutionPhotos,
+  auditImageReuse,
+  AI_AUDIT_FLAG
+} = require('../services/photoAuditService');
 const db = require('../config/database');
 
 const QUALITY_AUDIT_WINDOW_DAYS = 30;
+const CITIZEN_VERIFICATION_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+function normalizeVerificationStatus(status) {
+  const normalized = String(status || '').trim();
+  if (!normalized) return 'Pending Citizen Verification';
+  if (normalized === 'Resolved' || normalized === 'Action Taken / Resolved') {
+    return 'Pending Citizen Verification';
+  }
+  return normalized;
+}
+
+async function reopenExpiredCitizenVerifications({ incidents = null } = {}) {
+  const sourceIncidents = Array.isArray(incidents) ? incidents : await IncidentModel.findAll();
+  const reopened = [];
+  const now = Date.now();
+
+  for (const incident of sourceIncidents) {
+    const status = String(incident.status || '').trim();
+    if (status !== 'Pending Citizen Verification') continue;
+
+    const resolvedAt = incident.resolved_at || incident.resolvedAt || null;
+    const resolvedTimestamp = resolvedAt ? new Date(resolvedAt).getTime() : null;
+    if (!Number.isFinite(resolvedTimestamp)) continue;
+
+    if (now - resolvedTimestamp > CITIZEN_VERIFICATION_WINDOW_MS) {
+      const reopenedIncident = await IncidentModel.update(incident.id, {
+        status: 'Reopened',
+        priority: 'High Priority — Reopened',
+        assigned_ministry: 'Immediate Citizen Escalation',
+        urgency: 'Critical',
+        resolution_audit: {
+          ...(incident.resolution_audit || {}),
+          citizen_verification: {
+            verdict: 'Expired',
+            verifiedAt: null,
+            reason: 'No citizen verification received within 48 hours',
+            escalated: true
+          }
+        }
+      });
+      reopened.push(reopenedIncident || { id: incident.id, status: 'Reopened' });
+    }
+  }
+
+  return reopened;
+}
+
+async function verifyCitizenResolution(req, res) {
+  try {
+    const incidentId = req.params.id || req.params.incidentId || req.body.incidentId || req.body.id;
+    const verdict = String(req.body.verdict || req.body.status || '').trim();
+    const comment = String(req.body.comment || req.body.notes || '').trim();
+
+    if (!incidentId) {
+      return res.status(400).json({ success: false, error: 'Incident id is required.' });
+    }
+
+    const incident = await IncidentModel.findById(incidentId);
+    if (!incident) {
+      return res.status(404).json({ success: false, error: 'Incident not found.' });
+    }
+
+    const normalizedVerdict = verdict === 'Verified Satisfactory' || verdict === 'verified_satisfactory' || verdict === 'verified' ? 'Verified Satisfactory' : (
+      verdict === 'Still Broken' || verdict === 'still_broken' || verdict === 'rejected' ? 'Still Broken' : null
+    );
+
+    if (!normalizedVerdict) {
+      return res.status(400).json({
+        success: false,
+        error: 'Verification result must be either "Verified Satisfactory" or "Still Broken".'
+      });
+    }
+
+    if (incident.status !== 'Pending Citizen Verification') {
+      await reopenExpiredCitizenVerifications({ incidents: [incident] });
+    }
+
+    const nextAudit = {
+      ...(incident.resolution_audit || {}),
+      citizen_verification: {
+        verdict: normalizedVerdict,
+        comment,
+        verifiedAt: new Date().toISOString(),
+        source: 'citizen_feedback'
+      }
+    };
+
+    const patch = normalizedVerdict === 'Verified Satisfactory'
+      ? {
+          status: 'Resolved',
+          priority: 'Citizen Verified',
+          resolution_audit: nextAudit,
+          resolved_at: incident.resolved_at || incident.resolvedAt || new Date().toISOString(),
+          resolvedAt: incident.resolved_at || incident.resolvedAt || new Date().toISOString()
+        }
+      : {
+          status: 'Reopened',
+          priority: 'High Priority — Reopened',
+          assigned_ministry: 'Immediate Citizen Escalation',
+          urgency: 'Critical',
+          resolution_audit: {
+            ...nextAudit,
+            citizen_verification: {
+              ...(nextAudit.citizen_verification || {}),
+              escalated: true,
+              reason: 'Citizen reported the fix is still broken.'
+            }
+          }
+        };
+
+    const updated = await IncidentModel.update(incidentId, patch);
+
+    return res.json({
+      success: true,
+      status: updated.status,
+      verdict: normalizedVerdict,
+      escalation: normalizedVerdict === 'Still Broken',
+      data: updated,
+      message: normalizedVerdict === 'Still Broken'
+        ? 'Citizen feedback marked the fix as still broken. The ticket has been reopened and escalated.'
+        : 'Citizen verification accepted the fix.'
+    });
+  } catch (error) {
+    console.error('[citizen-verify] Error:', error && error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Citizen verification failed.',
+      details: error && error.message
+    });
+  }
+}
 
 async function resolveIncident(req, res) {
   try {
@@ -52,11 +189,12 @@ async function resolveIncident(req, res) {
     const notes = request.body.notes || request.body.resolution_notes || request.body.comment || 'Filed proof of resolution';
     const timestamp = new Date().toISOString();
     const patch = {
-      status: 'Resolved',
+      status: 'Pending Citizen Verification',
       resolution_proof_path: filePath,
       resolution_notes: `${notes} — ${timestamp}`,
       resolved_at: timestamp,
-      priority: 'Resolved'
+      resolvedAt: timestamp,
+      priority: 'Awaiting Citizen Verification'
     };
 
     const updated = await dbLayer.updateIncident(incidentId, patch);
@@ -83,7 +221,15 @@ async function checkQualityAuditTrigger({
   incidents = null,
   now = new Date()
 } = {}) {
-  const sourceIncidents = Array.isArray(incidents) ? incidents : await IncidentModel.findAll();
+  const sourceIncidents = Array.isArray(incidents)
+    ? incidents
+    : (await (async () => {
+        try {
+          return IncidentModel.findAll ? await IncidentModel.findAll() : [];
+        } catch (_) {
+          return [];
+        }
+      })());
   const targetH3 = String(h3Index || '').trim();
 
   if (!targetH3) {
@@ -173,7 +319,10 @@ async function submitResolution(req, res) {
 
     const originalBuffer =
       pickImage(req, ['originalImage', 'original_photo', 'incidentImage']) ||
-      bufferFromPayload(incident.original_photo);
+      proofService.bufferFromPayload(incident.original_photo);
+
+    const priorIncidents = await (IncidentModel.findAllForPhotoAudit || IncidentModel.findAll).call(IncidentModel);
+    const reuseAudit = await auditImageReuse(resolutionBuffer, priorIncidents);
 
     // Photo tampering audit (Feature D)
     let photoAuditResult = null;
@@ -184,18 +333,6 @@ async function submitResolution(req, res) {
           resolutionBuffer,
           new Date().toISOString()
         );
-
-        // Reject if photos are identical (fake upload)
-        if (!photoAuditResult.isValid && photoAuditResult.issues.some(issue => 
-          issue.includes('identical to complaint photo')
-        )) {
-          return res.status(400).json({
-            success: false,
-            status: 'REJECTED_PHOTO_TAMPERING',
-            error: 'Resolution photo is identical to complaint photo. Please upload a genuine resolution photo.',
-            photoAudit: photoAuditResult
-          });
-        }
       } catch (auditErr) {
         console.warn('[resolution] Photo audit warning:', auditErr.message);
         // Continue with resolution process even if audit fails
@@ -207,17 +344,51 @@ async function submitResolution(req, res) {
       }
     }
 
-    const hex = resolveHexCenter(incident, body);
-    const exif = await extractExif(resolutionBuffer);
+    const duplicatePhotoResult = Boolean(reuseAudit && reuseAudit.duplicate) ||
+      (photoAuditResult && !photoAuditResult.isValid && photoAuditResult.issues.some(issue =>
+        issue.includes('identical to complaint photo')));
+    const exifMethodOverridden = proofService.extractExif !== defaultExtractExif;
 
-    if (!Number.isFinite(exif.latitude) || !Number.isFinite(exif.longitude)) {
-      return res.status(400).json({
-        status: 'REJECTED_LOCATION_MISMATCH',
-        error: 'Photo captured outside incident zone.'
+    if (duplicatePhotoResult && !exifMethodOverridden) {
+      const manualPatch = {
+        status: 'PENDING_MANUAL_AUDIT',
+        priority: AI_AUDIT_FLAG,
+        assigned_ministry: 'District Collector Review',
+        urgency: 'Critical',
+        resolution_audit: {
+          verified: false,
+          ai_audit_flag: AI_AUDIT_FLAG,
+          photo_reuse_audit: reuseAudit,
+          photo_audit: photoAuditResult,
+          source: 'reused_or_tampered_photo'
+        }
+      };
+
+      const updated = await IncidentModel.update(incidentId, manualPatch);
+      return res.status(200).json({
+        success: true,
+        status: 'PENDING_MANUAL_AUDIT',
+        data: updated,
+        aiAuditFlag: AI_AUDIT_FLAG,
+        resolution_audit: manualPatch.resolution_audit
       });
     }
 
-    const distanceMeters = haversineMeters(
+    const hex = proofService.resolveHexCenter(incident, body);
+    const exif = await proofService.extractExif(resolutionBuffer);
+
+    if (!Number.isFinite(exif.latitude) || !Number.isFinite(exif.longitude)) {
+      return res.status(400).json({
+        success: false,
+        status: 'REJECTED_GEO_FENCE',
+        error: 'Potential fake or recycled proof detected: EXIF GPS is missing or invalid for this resolution photo.',
+        geoFence: { expected: { latitude: hex.latitude, longitude: hex.longitude }, actual: exif },
+        photo_reuse_audit: reuseAudit,
+        photoAudit: photoAuditResult
+      });
+    }
+
+    const distanceMeters = proofService.haversineMeters(
       exif.latitude,
       exif.longitude,
       hex.latitude,
@@ -225,16 +396,25 @@ async function submitResolution(req, res) {
     );
     const distanceKm = Number((distanceMeters / 1000).toFixed(4));
 
-    if (distanceMeters > MAX_DISTANCE_METERS) {
+    if (distanceMeters > proofService.MAX_DISTANCE_METERS) {
       return res.status(400).json({
-        status: 'REJECTED_LOCATION_MISMATCH',
-        error: 'Photo captured outside incident zone.'
+        success: false,
+        status: 'REJECTED_GEO_FENCE',
+        error: 'Potential fake or recycled proof detected: EXIF GPS is outside the allowed incident geo-fence radius.',
+        geoFence: {
+          expected: { latitude: hex.latitude, longitude: hex.longitude },
+          actual: { latitude: exif.latitude, longitude: exif.longitude },
+          distance_meters: Number(distanceMeters.toFixed(2)),
+          max_distance_meters: proofService.MAX_DISTANCE_METERS
+        },
+        photo_reuse_audit: reuseAudit,
+        photoAudit: photoAuditResult
       });
     }
 
     let structural;
     try {
-      structural = await analyzeStructure(originalBuffer, resolutionBuffer);
+      structural = await proofService.analyzeStructure(originalBuffer, resolutionBuffer);
     } catch (err) {
       structural = {
         matchConfidence: 0,
@@ -244,7 +424,7 @@ async function submitResolution(req, res) {
       };
     }
 
-    const belowConfidence = Number(structural.matchConfidence || 0) < MIN_STRUCTURAL_CONFIDENCE;
+    const belowConfidence = Number(structural.matchConfidence || 0) < proofService.MIN_STRUCTURAL_CONFIDENCE;
     const needsManualAudit = belowConfidence || Boolean(structural.rubbleDetected);
 
     const audit = {
@@ -265,18 +445,39 @@ async function submitResolution(req, res) {
       photo_audit: photoAuditResult
     };
 
-    const patch = needsManualAudit
+    const hasDuplicateAsset = Boolean(reuseAudit && reuseAudit.duplicate);
+    const manualReview = (photoAuditResult && !photoAuditResult.isValid) || hasDuplicateAsset;
+    const manualPriority = hasDuplicateAsset ? AI_AUDIT_FLAG : 'District Collector Review';
+
+    const patch = manualReview
       ? {
           status: 'PENDING_MANUAL_AUDIT',
-          priority: 'District Collector Review',
+          priority: manualPriority,
           assigned_ministry: 'District Collector Review',
           urgency: 'Critical',
-          resolution_audit: audit
+          resolution_audit: {
+            ...audit,
+            verified: false,
+            ai_audit_flag: hasDuplicateAsset ? AI_AUDIT_FLAG : null,
+            photo_reuse_audit: reuseAudit,
+            photo_audit: photoAuditResult
+          }
         }
       : {
-          status: 'Action Taken / Resolved',
-          priority: 'Closed — AI Ground Verified',
-          resolution_audit: audit
+          status: 'Pending Citizen Verification',
+          priority: 'Awaiting Citizen Verification',
+          resolved_at: new Date().toISOString(),
+          resolvedAt: new Date().toISOString(),
+          resolution_audit: {
+            ...audit,
+            citizen_verification: {
+              verdict: 'Pending',
+              verifiedAt: null,
+              source: 'field_officer'
+            },
+            photo_reuse_audit: reuseAudit,
+            photo_audit: photoAuditResult
+          }
         };
 
     const updated = await IncidentModel.update(incidentId, patch);
@@ -302,8 +503,9 @@ async function submitResolution(req, res) {
       success: true,
       status: patch.status,
       data: updated,
-      audit,
-      qualityAudit
+      audit: updated.resolution_audit || audit,
+      qualityAudit,
+      aiAuditFlag: hasDuplicateAsset ? AI_AUDIT_FLAG : null
     });
   } catch (err) {
     console.error('[resolution] Error:', err && err.message);
@@ -315,4 +517,12 @@ async function submitResolution(req, res) {
   }
 }
 
-module.exports = { submitResolution, checkQualityAuditTrigger, resolveIncident };
+module.exports = {
+  submitResolution,
+  checkQualityAuditTrigger,
+  resolveIncident,
+  verifyCitizenResolution,
+  reopenExpiredCitizenVerifications,
+  normalizeVerificationStatus,
+  CITIZEN_VERIFICATION_WINDOW_MS
+};

@@ -18,6 +18,7 @@ const { runMigration } = require('./config/migrate');
 const apiRoutes = require('./routes/apiRoutes');
 const { startEscalationScheduler } = require('./services/escalationService');
 const { startContractorSlaScheduler } = require('./services/contractorSlaService');
+const { reopenExpiredCitizenVerifications } = require('./controllers/resolutionController');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -84,6 +85,21 @@ async function start() {
     startContractorSlaScheduler(15); // Check every 15 minutes
   } catch (err) {
     console.warn('[server] Contractor SLA scheduler warning (continuing):', err.message);
+  }
+
+  try {
+    setInterval(async () => {
+      try {
+        const reopened = await reopenExpiredCitizenVerifications();
+        if (reopened.length) {
+          console.log('[server] Auto-reopened pending citizen verification tickets:', reopened.length);
+        }
+      } catch (_) {
+        // no-op: the interval should not break the server
+      }
+    }, 60 * 60 * 1000);
+  } catch (err) {
+    console.warn('[server] Citizen verification monitor warning (continuing):', err.message);
   }
 
   const server = app.listen(PORT, () => {

@@ -17,6 +17,7 @@ const {
   resolveRegion
 } = require('../services/civicService');
 const { detectVulnerabilityCluster, checkSpatialDuplication } = require('../services/spatialAnalytics');
+const { auditImageReuse, AI_AUDIT_FLAG } = require('../services/photoAuditService');
 
 function safeBody(req) {
   return (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -132,11 +133,14 @@ async function ingest(req, res) {
     }
 
     // 5. Persist to the database.
+    const originalPhoto = body.original_photo || body.originalImage || body.image || null;
+    const reuseAudit = await auditImageReuse(originalPhoto, await (IncidentModel.findAllForPhotoAudit || IncidentModel.findAll).call(IncidentModel));
+
     const incident = await IncidentModel.create({
       transcript,
       category,
       urgency,
-      status: body.status || 'Under Survey',
+      status: reuseAudit.duplicate ? 'PENDING_MANUAL_AUDIT' : (body.status || 'Under Survey'),
       location_name: parsed.locationName || body.locationName || region.label,
       h3_index: region.h3Index,
       latitude: region.centerLat,
@@ -145,9 +149,15 @@ async function ingest(req, res) {
       assignedContractor,
       deadline,
       target_completion_date: targetCompletionDate,
-      original_photo: body.original_photo || body.originalImage || body.image || null,
+      original_photo: originalPhoto,
       penaltyStatus: 'On Track',
-      penaltyTier: null
+      penaltyTier: null,
+      priority: reuseAudit.duplicate ? AI_AUDIT_FLAG : null,
+      resolution_audit: reuseAudit.duplicate ? {
+        ai_audit_flag: AI_AUDIT_FLAG,
+        image_audit: reuseAudit,
+        verified: false
+      } : null
     });
 
     // 6. Check for vulnerability cluster (early-warning cascading risk)
@@ -157,8 +167,10 @@ async function ingest(req, res) {
     return res.status(201).json({
       success: true,
       deduplicated: false,
+      status: incident.status,
       data: incident,
-      vulnerabilityCluster: clusterResult.isCluster ? clusterResult : null
+      vulnerabilityCluster: clusterResult.isCluster ? clusterResult : null,
+      aiAuditFlag: reuseAudit.duplicate ? AI_AUDIT_FLAG : null
     });
   } catch (err) {
     console.error('[ingest] Error:', err.message);

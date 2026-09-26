@@ -41,7 +41,9 @@ const FALLBACK_FILE = path.join(FALLBACK_DIR, 'incidents.json');
 class FileStore {
   constructor() {
     this.records = [];
+    this.whistleblowerReports = [];
     this._seq = 1;
+    this._whistleblowerSeq = 1;
     this._load();
   }
 
@@ -59,6 +61,21 @@ class FileStore {
       console.warn('[db:fallback] Could not read store, starting empty:', err.message);
       this.records = [];
     }
+
+    const whistleblowerFile = path.join(FALLBACK_DIR, 'whistleblower-reports.json');
+    try {
+      if (fs.existsSync(whistleblowerFile)) {
+        const raw = fs.readFileSync(whistleblowerFile, 'utf8');
+        const parsed = JSON.parse(raw || '[]');
+        if (Array.isArray(parsed) && parsed.length) {
+          this.whistleblowerReports = parsed;
+          this._whistleblowerSeq = parsed.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
+        }
+      }
+    } catch (err) {
+      console.warn('[db:fallback] Could not read whistleblower store, starting empty:', err.message);
+      this.whistleblowerReports = [];
+    }
   }
 
   _persist() {
@@ -69,6 +86,18 @@ class FileStore {
       fs.writeFileSync(FALLBACK_FILE, JSON.stringify(this.records, null, 2), 'utf8');
     } catch (err) {
       console.error('[db:fallback] Persist failure:', err.message);
+    }
+  }
+
+  _persistWhistleblowerReports() {
+    try {
+      if (!fs.existsSync(FALLBACK_DIR)) {
+        fs.mkdirSync(FALLBACK_DIR, { recursive: true });
+      }
+      const whistleblowerFile = path.join(FALLBACK_DIR, 'whistleblower-reports.json');
+      fs.writeFileSync(whistleblowerFile, JSON.stringify(this.whistleblowerReports, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[db:fallback] Whistleblower persist failure:', err.message);
     }
   }
 
@@ -103,6 +132,7 @@ class FileStore {
       penalty_status: data.penaltyStatus || data.penalty_status || 'On Track',
       penaltyTier: data.penaltyTier || data.penalty_tier || null,
       penalty_tier: data.penaltyTier || data.penalty_tier || null,
+      source: data.source || 'Web Portal',
       target_completion_date: data.target_completion_date || null,
       priority: data.priority || null,
       original_photo: data.original_photo || null,
@@ -130,6 +160,36 @@ class FileStore {
     }
     Object.assign(record, nextPatch);
     this._persist();
+    return record;
+  }
+
+  insertWhistleblowerReport(data = {}) {
+    const record = {
+      id: this._whistleblowerSeq++,
+      token_hash: data.token_hash || null,
+      category: data.category || 'General',
+      report_summary: data.report_summary || data.summary || null,
+      location_hint: data.location_hint || data.locationHint || null,
+      evidence: data.evidence || data.details || null,
+      status: data.status || 'Submitted',
+      status_message: data.status_message || 'Report received and stored anonymously.',
+      created_at: data.created_at || new Date().toISOString(),
+      updated_at: data.updated_at || data.created_at || new Date().toISOString()
+    };
+    this.whistleblowerReports.push(record);
+    this._persistWhistleblowerReports();
+    return record;
+  }
+
+  findWhistleblowerByTokenHash(tokenHash) {
+    return this.whistleblowerReports.find((r) => String(r.token_hash) === String(tokenHash)) || null;
+  }
+
+  updateWhistleblowerByTokenHash(tokenHash, patch = {}) {
+    const record = this.findWhistleblowerByTokenHash(tokenHash);
+    if (!record) return null;
+    Object.assign(record, patch);
+    this._persistWhistleblowerReports();
     return record;
   }
 
@@ -181,8 +241,8 @@ const db = {
            latitude, longitude, assigned_ministry, assigned_contractor, deadline,
            target_completion_date, priority, original_photo, resolution_audit,
            resolution_proof_path, resolution_notes, resolved_at, penalty_status,
-           penalty_tier, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, COALESCE($21, NOW()))
+           penalty_tier, source, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, COALESCE($22, NOW()))
         RETURNING *;
       `;
       const params = [
@@ -206,6 +266,7 @@ const db = {
         data.resolvedAt || data.resolved_at || null,
         data.penaltyStatus || data.penalty_status || 'On Track',
         data.penaltyTier || data.penalty_tier || null,
+        data.source || 'Web Portal',
         data.created_at || null
       ];
       const { rows } = await this.pool.query(sql, params);
@@ -219,6 +280,9 @@ const db = {
       const { rows } = await this.pool.query('SELECT * FROM incidents ORDER BY created_at DESC;');
       return rows;
     }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
     return this.fileStore.all();
   },
 
@@ -226,6 +290,9 @@ const db = {
     if (this.pool) {
       const { rows } = await this.pool.query('SELECT * FROM incidents WHERE id = $1;', [id]);
       return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
     }
     return this.fileStore.findById(id);
   },
@@ -247,7 +314,8 @@ const db = {
                resolution_notes = COALESCE($12, resolution_notes),
                resolved_at = COALESCE($13, resolved_at),
                penalty_status = COALESCE($14, penalty_status),
-               penalty_tier = COALESCE($15, penalty_tier)
+               penalty_tier = COALESCE($15, penalty_tier),
+               source = COALESCE($16, source)
          WHERE id = $1
          RETURNING *;`,
         [
@@ -265,10 +333,14 @@ const db = {
           patch.resolution_notes || patch.notes || null,
           patch.resolved_at || patch.resolvedAt || null,
           patch.penaltyStatus || patch.penalty_status || null,
-          patch.penaltyTier || patch.penalty_tier || null
+          patch.penaltyTier || patch.penalty_tier || null,
+          patch.source || null
         ]
       );
       return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
     }
     return this.fileStore.update(id, patch);
   },
@@ -278,7 +350,75 @@ const db = {
       const { rows } = await this.pool.query('SELECT COUNT(*)::int AS count FROM incidents;');
       return rows[0] ? rows[0].count : 0;
     }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
     return this.fileStore.count();
+  },
+
+  async insertWhistleblowerReport(data = {}) {
+    if (this.pool) {
+      const sql = `
+        INSERT INTO whistleblower_reports
+          (token_hash, category, report_summary, location_hint, evidence, status, status_message, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), COALESCE($9, NOW()))
+        RETURNING *;
+      `;
+      const { rows } = await this.pool.query(sql, [
+        data.token_hash || null,
+        data.category || 'General',
+        data.report_summary || data.summary || null,
+        data.location_hint || data.locationHint || null,
+        data.evidence || data.details || null,
+        data.status || 'Submitted',
+        data.status_message || 'Report received and stored anonymously.',
+        data.created_at || null,
+        data.updated_at || data.created_at || null
+      ]);
+      return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
+    return this.fileStore.insertWhistleblowerReport(data);
+  },
+
+  async getWhistleblowerReportByTokenHash(tokenHash) {
+    if (this.pool) {
+      const { rows } = await this.pool.query(
+        'SELECT * FROM whistleblower_reports WHERE token_hash = $1 LIMIT 1;',
+        [tokenHash]
+      );
+      return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
+    return this.fileStore.findWhistleblowerByTokenHash(tokenHash);
+  },
+
+  async updateWhistleblowerReportByTokenHash(tokenHash, patch = {}) {
+    if (this.pool) {
+      const { rows } = await this.pool.query(
+        `UPDATE whistleblower_reports
+           SET status = COALESCE($2, status),
+               status_message = COALESCE($3, status_message),
+               updated_at = COALESCE($4, updated_at)
+         WHERE token_hash = $1
+         RETURNING *;`,
+        [
+          tokenHash,
+          patch.status || null,
+          patch.status_message || patch.message || null,
+          patch.updated_at || patch.updatedAt || null
+        ]
+      );
+      return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
+    return this.fileStore.updateWhistleblowerByTokenHash(tokenHash, patch);
   }
 };
 

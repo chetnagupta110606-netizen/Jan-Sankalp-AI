@@ -11,7 +11,7 @@ const exifr = require('exifr');
 
 const TARGET_H3_CELL = '8c2a100d36bffff';
 const TARGET_H3_CENTER = { lat: 26.9248, lng: 75.8273 };
-const MAX_DISTANCE_METERS = 50;
+const MAX_DISTANCE_METERS = 500;
 const MIN_STRUCTURAL_CONFIDENCE = 0.65;
 const SAMPLE_SIZE = 64;
 

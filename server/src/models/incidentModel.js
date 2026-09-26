@@ -26,6 +26,7 @@ function toIncidentPayload(row = {}) {
     status: row.status || 'Pending Survey',
     location_name: row.location_name || 'Unassigned Region',
     h3_index: row.h3_index || null,
+    source: row.source || 'Web Portal',
     latitude: Number.isFinite(lat) ? lat : null,
     longitude: Number.isFinite(lng) ? lng : null,
     coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null,
@@ -95,6 +96,15 @@ const IncidentModel = {
       delete payload.original_photo;
       return payload;
     }).filter(Boolean);
+  },
+
+  async findAllForPhotoAudit() {
+    const rows = await db.getAllIncidents();
+    return rows.map((row) => ({
+      ...row,
+      has_original_photo: Boolean(row.original_photo),
+      original_photo: row.original_photo || null
+    })).filter(Boolean);
   },
 
   async findById(id) {

@@ -9,6 +9,25 @@
 const sharp = require('sharp');
 const crypto = require('crypto');
 
+const AI_AUDIT_FLAG = 'AI Audit Flag: Potential Spoofed Proof / Reused Asset';
+
+function toImageBuffer(imageValue) {
+  if (!imageValue) return null;
+  if (Buffer.isBuffer(imageValue)) return imageValue;
+  if (imageValue.buffer && Buffer.isBuffer(imageValue.buffer)) return imageValue.buffer;
+  if (typeof imageValue === 'string') {
+    const trimmed = imageValue.trim();
+    if (!trimmed) return null;
+    const base64 = trimmed.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+    try {
+      return Buffer.from(base64, 'base64');
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
 /**
  * Generate perceptual hash for an image
  * Uses a simple average hash algorithm for similarity detection
@@ -244,12 +263,62 @@ function generateFileHash(buffer) {
   return crypto.createHash('md5').update(buffer).digest('hex');
 }
 
+async function auditImageReuse(imageBuffer, existingIncidents = []) {
+  const currentBuffer = toImageBuffer(imageBuffer);
+  const currentHash = currentBuffer ? await generatePerceptualHash(currentBuffer) : null;
+
+  const baseResult = {
+    duplicate: false,
+    match: null,
+    perceptual_hash: currentHash,
+    similarity: 0,
+    distance: 0
+  };
+
+  if (!currentBuffer || !currentHash || !Array.isArray(existingIncidents) || !existingIncidents.length) {
+    return baseResult;
+  }
+
+  for (const incident of existingIncidents) {
+    if (!incident) continue;
+
+    const candidate = incident.original_photo || incident.originalPhoto || incident.image || incident.photo || null;
+    const candidateBuffer = toImageBuffer(candidate);
+    if (!candidateBuffer) continue;
+
+    const candidateHash = await generatePerceptualHash(candidateBuffer);
+    const distance = calculateHammingDistance(currentHash, candidateHash);
+    const maxDistance = currentHash.length;
+    const similarity = maxDistance ? 1 - (distance / maxDistance) : 0;
+
+    if (similarity >= 0.95) {
+      return {
+        duplicate: true,
+        match: {
+          incident_id: incident.id || incident.incident_id || null,
+          asset_type: 'complaint_photo',
+          similarity: Number(similarity.toFixed(6)),
+          distance,
+          source: 'existing_incident'
+        },
+        perceptual_hash: currentHash,
+        similarity: Number(similarity.toFixed(6)),
+        distance
+      };
+    }
+  }
+
+  return baseResult;
+}
+
 module.exports = {
+  AI_AUDIT_FLAG,
   generatePerceptualHash,
   calculateHammingDistance,
   checkImageSimilarity,
   extractImageMetadata,
   validatePhotoIntegrity,
   auditResolutionPhotos,
+  auditImageReuse,
   generateFileHash
 };
