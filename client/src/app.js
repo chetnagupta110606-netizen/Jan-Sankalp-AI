@@ -49,6 +49,7 @@
     // Role-based access control
     currentRole: 'citizen', // 'citizen' or 'officer'
     userRole: 'citizen', // persisted user role
+    resolvedOfficerTasks: {},
     // Offline queue management
     offlineQueue: [],
     isOnline: navigator.onLine
@@ -136,6 +137,7 @@
 
         // Render task queue
         var taskHtml = activeTasks.map(function(task) {
+          var isResolvedLocally = Boolean(appState.resolvedOfficerTasks[task.id]);
           var priorityClass = getPriorityClass(task.urgency);
           var priorityLabel = task.urgency || 'Medium';
           var timeAgo = getTimeAgo(task.created_at);
@@ -143,7 +145,7 @@
             '<div class="audit-flag warning">⚠️ High-Risk Cluster Detected</div>' : '';
 
           return [
-            '<div class="officer-task-item" data-task-id="' + task.id + '">',
+            '<div class="officer-task-item' + (isResolvedLocally ? ' is-resolved' : '') + '" data-task-id="' + task.id + '">',
             '<div class="flex items-center justify-between mb-2">',
             '<span class="task-priority ' + priorityClass + '">' + priorityLabel + '</span>',
             '<span class="task-assignee">' + timeAgo + '</span>',
@@ -156,7 +158,9 @@
             clusterFlag,
             '<div class="task-actions">',
             '<button class="task-action-btn" onclick="viewTaskDetails(' + task.id + ')">View Details</button>',
-            '<button class="task-action-btn primary" onclick="selectTaskForResolution(' + task.id + ')">Resolve</button>',
+            isResolvedLocally ?
+              '<button class="task-action-btn resolved" type="button" disabled>Resolved ✓</button>' :
+              '<button class="task-action-btn primary" onclick="selectTaskForResolution(' + task.id + ')">Resolve</button>',
             '</div>',
             '</div>'
           ].join('');
@@ -216,6 +220,51 @@
     if (taskSelect) {
       taskSelect.value = taskId;
     }
+
+    var resolutionSection = $('resolutionProofSection');
+    if (resolutionSection) {
+      resolutionSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      resolutionSection.classList.remove('resolution-proof-highlight');
+      void resolutionSection.offsetWidth;
+      resolutionSection.classList.add('resolution-proof-highlight');
+      window.setTimeout(function() {
+        resolutionSection.classList.remove('resolution-proof-highlight');
+      }, 2200);
+    }
+  }
+
+  function submitOfficerResolution(event) {
+    event.preventDefault();
+
+    var taskSelect = $('officerTaskSelect');
+    var result = $('officerResolutionResult');
+    var taskId = taskSelect && taskSelect.value;
+    if (!taskId) {
+      if (result) {
+        result.textContent = 'Select an assigned task before submitting.';
+        result.style.color = '#F59E0B';
+      }
+      return;
+    }
+
+    appState.resolvedOfficerTasks[taskId] = true;
+    if (result) {
+      result.textContent = 'Resolution verified! Task marked as completed and EXIF metadata logged.';
+      result.style.color = '#10B981';
+    }
+
+    var taskCards = document.querySelectorAll('.officer-task-item');
+    Array.prototype.forEach.call(taskCards, function(taskCard) {
+      if (taskCard.getAttribute('data-task-id') !== String(taskId)) return;
+      taskCard.classList.add('is-resolved');
+      var resolveButton = taskCard.querySelector('.task-action-btn.primary');
+      if (resolveButton) {
+        resolveButton.textContent = 'Resolved ✓';
+        resolveButton.disabled = true;
+        resolveButton.classList.remove('primary');
+        resolveButton.classList.add('resolved');
+      }
+    });
   }
 
   // Make functions globally accessible
@@ -2161,6 +2210,10 @@
     });
 
     initRoleSwitching();
+    var officerResolutionForm = $('officerResolutionForm');
+    if (officerResolutionForm) {
+      officerResolutionForm.addEventListener('submit', submitOfficerResolution);
+    }
     initMap();
     initSpeech();
     initScanButton();

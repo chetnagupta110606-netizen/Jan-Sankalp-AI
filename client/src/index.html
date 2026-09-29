@@ -227,9 +227,9 @@
             </div>
           </section>
 
-          <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl shadow-slate-950/40">
+          <section id="resolutionProofSection" class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl shadow-slate-950/40">
             <h2 class="mb-3 text-xl font-semibold text-white">Resolution Proof Upload</h2>
-            <div class="space-y-4">
+            <form id="officerResolutionForm" class="space-y-4">
               <div>
                 <label class="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Select Task</label>
                 <select id="officerTaskSelect" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200">
@@ -250,13 +250,13 @@
                 <label class="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Resolution Notes</label>
                 <textarea id="officerResolutionNotes" rows="3" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-200" placeholder="Describe the resolution work completed..."></textarea>
               </div>
-              <button id="officerSubmitResolution" class="w-full rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-500">
+              <button id="officerSubmitResolution" type="submit" class="w-full rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-500">
                 Submit Resolution Proof
               </button>
-              <div id="officerResolutionResult" class="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-300">
+              <div id="officerResolutionResult" role="status" aria-live="polite" class="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-300">
                 Awaiting resolution submission.
               </div>
-            </div>
+            </form>
           </section>
 
           <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl shadow-slate-950/40">

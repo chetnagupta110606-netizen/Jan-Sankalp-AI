@@ -947,6 +947,15 @@ body {
   border-color: var(--indigo);
   box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
 }
+.officer-task-item.is-resolved { opacity: 0.4; }
+@keyframes resolutionProofFocus {
+  0%, 100% { border-color: var(--border); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  25%, 65% { border-color: var(--emerald); box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.28); }
+}
+#resolutionProofSection.resolution-proof-highlight {
+  animation: resolutionProofFocus 2.2s ease-out;
+}
+#resolutionProofSection { scroll-margin-top: 76px; }
 .task-priority {
   display: inline-block;
   padding: 4px 8px;
@@ -999,6 +1008,14 @@ body {
 }
 .task-action-btn.primary:hover {
   background: #10b981;
+}
+.task-action-btn.resolved,
+.task-action-btn.resolved:disabled {
+  background: var(--emerald);
+  border-color: var(--emerald);
+  color: #fff;
+  cursor: default;
+  opacity: 1;
 }
 
 /* ── Audit Flag Styles ── */
