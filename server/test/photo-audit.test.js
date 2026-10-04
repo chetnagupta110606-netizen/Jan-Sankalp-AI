@@ -133,7 +133,10 @@ test('resolution submissions using a reused image are persisted without auto-app
   await submitResolution({
     params: { id: '42' },
     body: { notes: 'Work completed' },
-    files: { image: [{ buffer: photo }] }
+    files: {
+      originalImage: [{ buffer: photo }],
+      resolutionImage: [{ buffer: photo }]
+    }
   }, res);
 
   assert.equal(res.statusCode, 200);
@@ -172,7 +175,10 @@ test('resolution submissions reject proof with missing EXIF GPS and flag possibl
   await submitResolution({
     params: { id: '42' },
     body: { notes: 'Work completed' },
-    files: { image: [{ buffer: photo }] }
+    files: {
+      originalImage: [{ buffer: photo }],
+      resolutionImage: [{ buffer: photo }]
+    }
   }, res);
 
   assert.equal(res.statusCode, 400);

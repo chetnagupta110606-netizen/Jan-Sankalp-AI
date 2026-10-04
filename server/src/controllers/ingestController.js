@@ -14,7 +14,8 @@ const { checkQualityAuditTrigger } = require('./resolutionController');
 const {
   parseTranscript,
   computeSlaTargetDate,
-  resolveRegion
+  resolveRegion,
+  deriveH3Index
 } = require('../services/civicService');
 const { detectVulnerabilityCluster, checkSpatialDuplication } = require('../services/spatialAnalytics');
 const { auditImageReuse, AI_AUDIT_FLAG } = require('../services/photoAuditService');
@@ -24,9 +25,34 @@ function safeBody(req) {
 }
 
 function resolveIngestRegion(parsed, body) {
+  const selectedLocation = body.locationSource === 'browser' || body.locationSource === 'map';
+  const coordinates = Array.isArray(body.coordinates) ? body.coordinates : null;
+  if (selectedLocation && coordinates && coordinates.length >= 2) {
+    const latitude = Number(coordinates[0]);
+    const longitude = Number(coordinates[1]);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude) &&
+        latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+      const region = parsed.region || resolveRegion({ locationName: body.locationName });
+      return {
+        ...region,
+        centerLat: latitude,
+        centerLng: longitude,
+        h3Index: deriveH3Index(latitude, longitude)
+      };
+    }
+  }
+  if (Array.isArray(parsed.coordinates)) {
+    return resolveRegion({
+      locationName: parsed.locationName,
+      coordinates: parsed.coordinates
+    });
+  }
   if (parsed.region) return parsed.region;
   if (parsed.locationName) {
-    return resolveRegion({ locationName: parsed.locationName });
+    return resolveRegion({
+      locationName: parsed.locationName,
+      coordinates: Array.isArray(parsed.coordinates) ? parsed.coordinates : null
+    });
   }
   if (body.locationName) {
     return resolveRegion({
@@ -106,6 +132,7 @@ async function ingest(req, res) {
     // 4. Check for spatial deduplication before creating new incident
     const tempIncident = {
       transcript,
+      category,
       h3_index: region.h3Index,
       latitude: region.centerLat,
       longitude: region.centerLng,
@@ -115,8 +142,23 @@ async function ingest(req, res) {
     const deduplicationCheck = await checkSpatialDuplication(tempIncident);
 
     if (deduplicationCheck.isDuplicate) {
-      // Increment upvote count on existing incident
-      const existingIncident = await IncidentModel.incrementUpvoteCount(deduplicationCheck.existingIncident.id);
+      const duplicateReport = {
+        transcript,
+        category,
+        urgency,
+        location_name: parsed.locationName || body.locationName || region.label,
+        latitude: region.centerLat,
+        longitude: region.centerLng,
+        reporterId: body.reporterId || body.reporter_id || null,
+        reporterName: body.reporterName || body.reporter_name || null,
+        source: body.source || 'Web Portal',
+        created_at: new Date().toISOString()
+      };
+      const existingIncident = await IncidentModel.appendSubReport(
+        deduplicationCheck.existingIncident.id,
+        duplicateReport,
+        urgency
+      );
       const updatedPayload = IncidentModel.toIncidentPayload(existingIncident);
 
       return res.status(200).json({

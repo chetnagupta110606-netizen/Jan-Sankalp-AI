@@ -120,8 +120,8 @@ test('fails closed when the trusted JWT configuration is missing', () => {
   assert.equal(statusCode, 503);
 });
 
-test('both resolution submission routes use trusted Officer/Admin authorization', () => {
-  const protectedPaths = ['/resolutions', '/incidents/:id/resolution'];
+test('all resolution submission routes use trusted Officer/Admin authorization', () => {
+  const protectedPaths = ['/resolutions', '/incidents/:id/resolution', '/incidents/:incidentId/resolve'];
   for (const path of protectedPaths) {
     const routeLayer = apiRoutes.stack.find((layer) =>
       layer.route && layer.route.path === path && layer.route.methods.post

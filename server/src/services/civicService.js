@@ -7,6 +7,8 @@
  * ------------------------------------------------------------------
  */
 
+const h3 = require('h3-js');
+
 // ── Canonical monitored regions ────────────────────────────────────
 const URBAN_REGIONS = [
   {
@@ -156,7 +158,9 @@ const LOCATION_STOP_WORDS = new Set([
 ]);
 
 function extractUserLocation(transcript) {
-  const text = String(transcript || '');
+  const text = String(transcript || '')
+    .replace(/\b(?:coordinates?|gps)\s*[:=]?\s*-?\d{1,2}(?:\.\d+)?\s*[,;/ ]+\s*-?\d{1,3}(?:\.\d+)?/ig, ' ')
+    .replace(/\blat(?:itude)?\s*[:=]?\s*-?\d{1,2}(?:\.\d+)?[\s,;]+(?:lng|lon(?:gitude)?)\s*[:=]?\s*-?\d{1,3}(?:\.\d+)?/ig, ' ');
   const explicit = text.match(/\b(?:location|city)\s*[:=-]\s*([^,;.!?\n]+)/i);
   const contextual = explicit
     ? explicit[1]
@@ -189,6 +193,22 @@ function extractUserLocation(transcript) {
   return locationName || null;
 }
 
+function extractTranscriptCoordinates(transcript) {
+  const text = String(transcript || '');
+  const coordinateMatch = text.match(/\b(?:coordinates?|gps)\s*[:=]?\s*(-?\d{1,2}(?:\.\d+)?)\s*[,;/ ]+\s*(-?\d{1,3}(?:\.\d+)?)/i);
+  const latitudeLongitudeMatch = text.match(/\blat(?:itude)?\s*[:=]?\s*(-?\d{1,2}(?:\.\d+)?)[\s,;]+(?:lng|lon(?:gitude)?)\s*[:=]?\s*(-?\d{1,3}(?:\.\d+)?)/i);
+  const match = coordinateMatch || latitudeLongitudeMatch;
+  if (!match) return null;
+
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+      latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return null;
+  }
+  return [latitude, longitude];
+}
+
 /**
  * Infer category, urgency, ministry and location from a transcript.
  */
@@ -206,6 +226,7 @@ function parseTranscript(transcript = '') {
   const locationMatch = LOCATION_KEYWORDS.find((entry) =>
     entry.pattern.some((kw) => text.includes(kw))
   );
+  const northEastMention = /\bnorth[\s-]?east(?:ern)?(?:\s+(?:area|region|states?))?\b/i.test(transcript);
 
   // Explicit city mentions must override defaults. If the transcript names
   // a monitored region (e.g. "Jaipur"), return the canonical region record
@@ -215,13 +236,14 @@ function parseTranscript(transcript = '') {
     : null;
   const locationName = matchedRegion
     ? matchedRegion.locationName
-    : extractUserLocation(transcript);
+    : (northEastMention ? 'North East Region' : extractUserLocation(transcript));
 
   return {
     category: matchedRegion ? matchedRegion.category : (categoryMatch ? categoryMatch.category : 'General Infrastructure'),
     ministry: matchedRegion ? matchedRegion.targetMinistry : (categoryMatch ? categoryMatch.ministry : 'Ministry of Housing and Urban Affairs'),
     urgency: matchedRegion ? matchedRegion.urgency : (urgencyMatch ? urgencyMatch.urgency : 'Medium'),
     locationName,
+    coordinates: extractTranscriptCoordinates(transcript),
     region: matchedRegion ? { ...matchedRegion } : null
   };
 }
@@ -243,8 +265,12 @@ function computeSlaTargetDate(urgency = 'Medium', daysAheadOverride = null) {
  * is not part of the monitored catalogue.
  */
 function deriveH3Index(lat, lng) {
-  const base = Math.abs(Math.round((lat + 90) * 1000) * 31 + Math.round((lng + 180) * 1000));
-  return `8c${base.toString(16).padStart(13, '0').slice(0, 13)}`;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  try {
+    return h3.latLngToCell(lat, lng, 9);
+  } catch (_) {
+    return null;
+  }
 }
 
 /**
@@ -285,20 +311,23 @@ function resolveRegion(input = {}) {
       if (byRegion) return { ...byRegion };
     }
     const unGeocodedName = String(locationName).trim();
+    const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
     return {
       label: unGeocodedName,
       locationName: unGeocodedName,
       category: 'General Infrastructure',
       urgency: 'Medium',
       targetMinistry: 'Ministry of Housing and Urban Affairs',
-      h3Index: null,
-      centerLat: null,
-      centerLng: null,
+      h3Index: hasCoordinates ? deriveH3Index(lat, lng) : null,
+      centerLat: hasCoordinates ? lat : null,
+      centerLng: hasCoordinates ? lng : null,
       budget: 250000000,
       impactedCitizens: 500000,
       priorityIndex: 80,
       alignmentScore: 85,
-      summary: `Citizen-reported civic deficiency in ${unGeocodedName} requires coordinated inspection.`
+      summary: hasCoordinates
+        ? `Citizen-reported civic deficiency in ${unGeocodedName} requires coordinated inspection near ${lat.toFixed(4)}, ${lng.toFixed(4)}.`
+        : `Citizen-reported civic deficiency in ${unGeocodedName} requires coordinated inspection.`
     };
   }
 
@@ -325,7 +354,21 @@ function resolveRegion(input = {}) {
     };
   }
 
-  return { ...URBAN_REGIONS[0] };
+  return {
+    label: 'Unassigned Region',
+    locationName: 'Unassigned Region',
+    category: 'General Infrastructure',
+    urgency: 'Medium',
+    targetMinistry: 'Ministry of Housing and Urban Affairs',
+    h3Index: null,
+    centerLat: null,
+    centerLng: null,
+    budget: 0,
+    impactedCitizens: 0,
+    priorityIndex: 0,
+    alignmentScore: 0,
+    summary: 'Citizen-reported civic deficiency requires location details for coordinated inspection.'
+  };
 }
 
 function buildPolygonForRegion(lat, lng, radius = 0.18) {
@@ -347,6 +390,7 @@ module.exports = {
   URBAN_REGIONS,
   SLA_DAYS,
   parseTranscript,
+  extractTranscriptCoordinates,
   computeSlaTargetDate,
   deriveH3Index,
   resolveRegion,

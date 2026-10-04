@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   generateDPRPdf,
   TILE_TIME_HISTORICAL,
@@ -9,6 +9,8 @@ import {
 } from '../utils/dprPdfGenerator';
 
 export type DistrictDprData = {
+  incidentId?: number | string;
+  id?: number | string;
   district?: string;
   category?: string;
   urgency?: string;
@@ -38,8 +40,49 @@ interface DPRReportDrawerProps {
 export default function DPRReportDrawer({
   selectedDistrictData
 }: DPRReportDrawerProps) {
+  const [apiData, setApiData] = useState<DistrictDprData | null>(null);
+  const [apiError, setApiError] = useState('');
+  const selectedIncidentId = selectedDistrictData &&
+    (selectedDistrictData.incidentId || selectedDistrictData.id);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const endpoint = 'http://localhost:5000/api/v1/dpr';
+    const url = selectedIncidentId
+      ? `${endpoint}?incidentId=${encodeURIComponent(String(selectedIncidentId))}`
+      : endpoint;
+
+    setApiError('');
+    setApiData(null);
+    fetch(url, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`DPR request failed (${response.status}).`);
+        return response.json();
+      })
+      .then((report) => {
+        setApiData({
+          incidentId: report.incident_id,
+          district: report.location || report.locationName,
+          category: report.category,
+          urgency: report.urgency,
+          status: report.status,
+          reportId: report.reportId,
+          h3Index: report.h3Index,
+          transcript: report.description || report.transcript,
+          timestamp: report.createdAt
+        });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name !== 'AbortError') {
+          setApiError(error.message);
+        }
+      });
+
+    return () => controller.abort();
+  }, [selectedIncidentId]);
+
   const fallbackData: DistrictDprData = {
-    district: 'Delhi Central (Selected Area)',
+    district: 'Selected Area',
     category: 'Road Infrastructure',
     urgency: 'Medium',
     priority: 'Medium',
@@ -54,8 +97,8 @@ export default function DPRReportDrawer({
     timestamp: new Date().toISOString()
   };
 
-  const data = selectedDistrictData || fallbackData;
-  const districtName = data.district || 'Delhi Central (Selected Area)';
+  const data = (selectedIncidentId ? apiData || selectedDistrictData : selectedDistrictData || apiData) || fallbackData;
+  const districtName = data.district || 'Selected Area';
   const category = data.category || 'Road Infrastructure';
   const priorityLevel = data.urgency || data.priority || 'Medium';
   const statusText =
@@ -106,6 +149,8 @@ export default function DPRReportDrawer({
           📥 Download Official DPR (PDF)
         </button>
       </div>
+
+      {apiError ? <p role="status" className="mb-3 text-xs text-amber-300">Live DPR unavailable: {apiError}</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-700 bg-slate-950/70 p-3">

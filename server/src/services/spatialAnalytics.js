@@ -34,6 +34,25 @@ function containsMonsoonRiskKeywords(transcript) {
   return MONSOON_RISK_KEYWORDS.some(keyword => text.includes(keyword));
 }
 
+function hasCoordinates(incident) {
+  return incident && incident.latitude != null && incident.longitude != null &&
+    Number.isFinite(Number(incident.latitude)) && Number.isFinite(Number(incident.longitude));
+}
+
+function normalizeCategory(category) {
+  return String(category || '').trim().toLowerCase();
+}
+
+function hasSameH3Cell(left, right) {
+  const leftCell = String(left && left.h3_index || '');
+  const rightCell = String(right && right.h3_index || '');
+  return Boolean(leftCell && leftCell === rightCell && leftCell.toLowerCase() !== 'sms-ussd-fallback');
+}
+
+function normalizeLocation(location) {
+  return String(location || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 /**
  * Spatial deduplication check using H3 indexing
  * Returns existing incident if duplicate found within distance threshold
@@ -47,30 +66,22 @@ async function checkSpatialDuplication(newIncident) {
       DEDUPLICATION_RESOLUTION
     );
 
-    if (!h3Index) {
+    const newHasCoordinates = hasCoordinates(newIncident);
+    if (!h3Index && (!newIncident.transcript || !newIncident.location_name)) {
       return { isDuplicate: false, reason: 'Invalid H3 index' };
     }
 
     // Get all incidents
     const allIncidents = await IncidentModel.findAll();
 
-    // Filter for open incidents and check distance
+    // Compare against open records; a resolved report should not absorb a new case.
     const nearbyIncidents = allIncidents.filter(incident => {
-      // Skip resolved/closed incidents
-      if (incident.status === 'Resolved' || incident.status === 'Closed') {
-        return false;
-      }
+      const status = String(incident.status || '').trim().toLowerCase();
+      if (['resolved', 'verified', 'closed', 'completed', 'action taken / resolved'].includes(status)) return false;
 
-      // Skip the current incident if it has an ID
       if (newIncident.id && incident.id === newIncident.id) {
         return false;
       }
-
-      // Check if coordinates are available
-      if (!incident.latitude || !incident.longitude) {
-        return false;
-      }
-
       return true;
     });
 
@@ -78,28 +89,55 @@ async function checkSpatialDuplication(newIncident) {
       return { isDuplicate: false, reason: 'No nearby open incidents' };
     }
 
-    // Check actual distance for 20m threshold
     for (const incident of nearbyIncidents) {
-      const distance = haversineDistance(
-        newIncident.latitude,
-        newIncident.longitude,
-        incident.latitude,
-        incident.longitude
-      );
+      if (!normalizeCategory(newIncident.category) ||
+          normalizeCategory(newIncident.category) !== normalizeCategory(incident.category)) {
+        continue;
+      }
 
-      if (distance <= DEDUPLICATION_DISTANCE_METERS) {
-        // Found duplicate within threshold
+      if (hasSameH3Cell(newIncident, incident)) {
         return {
           isDuplicate: true,
           existingIncident: incident,
-          distance: distance,
+          distance: null,
+          h3Index: newIncident.h3_index,
+          reason: 'Duplicate found in the same H3 cell and category'
+        };
+      }
+
+      if (newHasCoordinates && hasCoordinates(incident)) {
+        const distance = haversineDistance(
+          Number(newIncident.latitude),
+          Number(newIncident.longitude),
+          Number(incident.latitude),
+          Number(incident.longitude)
+        );
+        if (distance <= DEDUPLICATION_DISTANCE_METERS) {
+          return {
+            isDuplicate: true,
+            existingIncident: incident,
+            distance,
+            h3Index,
+            reason: `Duplicate found within ${distance.toFixed(1)}m`
+          };
+        }
+        continue;
+      }
+
+      const newLocation = normalizeLocation(newIncident.location_name);
+      const existingLocation = normalizeLocation(incident.location_name);
+      if ((!newHasCoordinates || !hasCoordinates(incident)) && newLocation && newLocation === existingLocation) {
+        return {
+          isDuplicate: true,
+          existingIncident: incident,
+          distance: null,
           h3Index: h3Index,
-          reason: `Duplicate found within ${distance.toFixed(1)}m`
+          reason: 'Same location and category reported without complete coordinates'
         };
       }
     }
 
-    return { isDuplicate: false, reason: 'No incidents within 20m threshold' };
+    return { isDuplicate: false, reason: h3Index ? 'No same-category incidents in the same H3 cell or within 20m' : 'No similar same-category complaint for this location' };
 
   } catch (err) {
     console.error('[spatial] Deduplication check error:', err.message);

@@ -296,7 +296,7 @@ function pickImage(req, keys) {
 async function submitResolution(req, res) {
   try {
     const body = safeBody(req);
-    const incidentId = req.params.id || body.incidentId || body.id || body.incident_id;
+    const incidentId = req.params.id || req.params.incidentId || body.incidentId || body.id || body.incident_id;
     if (!incidentId) {
       return res.status(400).json({
         success: false,
@@ -304,22 +304,20 @@ async function submitResolution(req, res) {
       });
     }
 
+    const originalBuffer = pickImage(req, ['originalImage', 'beforeImage', 'original_photo', 'incidentImage']);
+    const resolutionBuffer = pickImage(req, ['resolutionImage', 'afterImage', 'image', 'photo', 'resolution_photo']);
+    if (!originalBuffer || !resolutionBuffer) {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_RESOLUTION_IMAGES',
+        error: 'Both resolution proof images are required to submit verification.'
+      });
+    }
+
     const incident = await IncidentModel.findById(incidentId);
     if (!incident) {
       return res.status(404).json({ success: false, error: 'Incident not found.' });
     }
-
-    const resolutionBuffer = pickImage(req, ['image', 'resolutionImage', 'photo', 'resolution_photo']);
-    if (!resolutionBuffer) {
-      return res.status(400).json({
-        success: false,
-        error: 'Resolution photo is required.'
-      });
-    }
-
-    const originalBuffer =
-      pickImage(req, ['originalImage', 'original_photo', 'incidentImage']) ||
-      proofService.bufferFromPayload(incident.original_photo);
 
     const priorIncidents = await (IncidentModel.findAllForPhotoAudit || IncidentModel.findAll).call(IncidentModel);
     const reuseAudit = await auditImageReuse(resolutionBuffer, priorIncidents);

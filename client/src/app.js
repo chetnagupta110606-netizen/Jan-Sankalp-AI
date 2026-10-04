@@ -23,8 +23,9 @@
 
   var appState = {
     transcript: '',
-    location: 'New Delhi, Delhi',
-    coordinates: [28.6139, 77.2090],
+    location: 'Location not selected',
+    locationSource: 'default',
+    coordinates: [22.5, 78.0],
     // Explicit spatial reference: every coordinate payload in this client is
     // normalised to EPSG:4326 / WGS84 decimal degrees (Leaflet lat/lng order).
     crs: 'EPSG:4326',
@@ -38,12 +39,16 @@
     comparisonEnabled: true,
     category: 'Pending Voice Input',
     urgency: '--',
-    h3Index: '--',
+    h3Index: null,
     targetDate: '--',
     ministry: 'Ministry of Housing and Urban Affairs',
     status: 'Pending Survey',
     latestIncident: null,
     incidents: [],
+    selectedPhotoDataUrl: null,
+    officerFilter: 'all',
+    officerMap: null,
+    officerMapLayer: null,
     // Vulnerability cluster detection for early-warning cascading risk
     vulnerabilityCluster: null,
     // Role-based access control
@@ -83,14 +88,17 @@
     function switchRole(role) {
       appState.currentRole = role;
       appState.userRole = role;
+      document.body.classList.toggle('officer-portal-active', role === 'officer');
       localStorage.setItem('userRole', role);
 
       // Update button states
       if (citizenBtn) {
         citizenBtn.classList.toggle('active', role === 'citizen');
+        citizenBtn.setAttribute('aria-pressed', String(role === 'citizen'));
       }
       if (officerBtn) {
         officerBtn.classList.toggle('active', role === 'officer');
+        officerBtn.setAttribute('aria-pressed', String(role === 'officer'));
       }
 
       // Update view containers
@@ -109,6 +117,10 @@
       // Load role-specific data
       if (role === 'officer') {
         loadOfficerTasks();
+        window.setTimeout(function () {
+          ensureOfficerMap();
+          if (appState.officerMap) { appState.officerMap.invalidateSize(); }
+        }, 80);
       }
     }
   }
@@ -122,49 +134,49 @@
 
     safeFetch(API_BASE + '/incidents')
       .then(function(res) {
-        var incidents = (res && res.data) || [];
-        var activeTasks = incidents.filter(function(inc) {
-          return inc.status !== 'Resolved' && inc.status !== 'Closed';
+        var incidents = ((res && res.data) || []).slice().sort(compareOfficerIncidents);
+        var historicalTasks = incidents.filter(isHistoricalIncident);
+        var activeTasks = incidents.filter(function (incident) { return !isHistoricalIncident(incident); });
+        updateOfficerMetrics(incidents, activeTasks);
+        renderOfficerIncidentMap(activeTasks);
+        var sourceTasks = appState.officerFilter === 'archive' ? historicalTasks : activeTasks;
+        var visibleTasks = sourceTasks.filter(function (incident) {
+          var status = String(incident.status || '').toLowerCase();
+          if (appState.officerFilter === 'critical') return String(incident.urgency || '').toLowerCase() === 'critical';
+          if (appState.officerFilter === 'escalated') {
+            return status.indexOf('escalat') !== -1 || status.indexOf('breach') !== -1 || status.indexOf('audit') !== -1;
+          }
+          return true;
         });
 
-        if (activeTasks.length === 0) {
-          setHTML(taskQueue, '<div class="text-sm text-slate-400">No active tasks assigned.</div>');
+        if (visibleTasks.length === 0) {
+          setHTML(taskQueue, '<div class="empty-state"><div class="empty-state-mark" aria-hidden="true">✓</div><strong>No incidents in this view</strong><p>Try another filter or check again after new reports arrive.</p></div>');
           if (taskSelect) {
             taskSelect.innerHTML = '<option value="">-- No active tasks --</option>';
           }
           return;
         }
 
-        // Render task queue
-        var taskHtml = activeTasks.map(function(task) {
-          var isResolvedLocally = Boolean(appState.resolvedOfficerTasks[task.id]);
-          var priorityClass = getPriorityClass(task.urgency);
-          var priorityLabel = task.urgency || 'Medium';
-          var timeAgo = getTimeAgo(task.created_at);
-          var clusterFlag = task.vulnerabilityCluster && task.vulnerabilityCluster.isCluster ?
-            '<div class="audit-flag warning">⚠️ High-Risk Cluster Detected</div>' : '';
-
-          return [
-            '<div class="officer-task-item' + (isResolvedLocally ? ' is-resolved' : '') + '" data-task-id="' + task.id + '">',
-            '<div class="flex items-center justify-between mb-2">',
-            '<span class="task-priority ' + priorityClass + '">' + priorityLabel + '</span>',
-            '<span class="task-assignee">' + timeAgo + '</span>',
-            '</div>',
-            '<div class="text-sm font-semibold text-white mb-1">' + (task.transcript || 'No description').substring(0, 60) + '...</div>',
-            '<div class="text-xs text-slate-400 mb-2">',
-            '📍 ' + (task.location_name || 'Unknown location') + ' | ',
-            'H3: ' + (task.h3_index || 'N/A'),
-            '</div>',
-            clusterFlag,
-            '<div class="task-actions">',
-            '<button class="task-action-btn" onclick="viewTaskDetails(' + task.id + ')">View Details</button>',
-            isResolvedLocally ?
-              '<button class="task-action-btn resolved" type="button" disabled>Resolved ✓</button>' :
-              '<button class="task-action-btn primary" onclick="selectTaskForResolution(' + task.id + ')">Resolve</button>',
-            '</div>',
-            '</div>'
-          ].join('');
-        }).join('');
+        var taskHtml = [
+          '<div class="incident-table-wrap"><table class="incident-table">',
+          '<thead><tr><th>Incident</th><th>Location</th><th>Priority</th><th>Status</th><th>Reported</th><th>Action</th></tr></thead><tbody>',
+          visibleTasks.map(function (task) {
+            var status = String(task.status || 'Pending Survey');
+            var isSubmitted = Boolean(appState.resolvedOfficerTasks[task.id]);
+            return [
+              '<tr class="officer-task-item' + (isSubmitted ? ' is-resolved' : '') + '" data-task-id="' + escapeHtml(task.id) + '">',
+              '<td><strong>#' + escapeHtml(task.id) + '</strong><small>' + escapeHtml((task.transcript || 'No description').substring(0, 66)) + '</small>' + reportCountBadge(task) + '</td>',
+              '<td>' + escapeHtml(task.location_name || 'Unassigned') + '<small>H3 ' + escapeHtml(task.h3_index || 'Not indexed') + '</small></td>',
+              '<td><span class="priority-badge ' + getPriorityClass(task.urgency) + '">' + escapeHtml(task.urgency || 'Medium') + '</span></td>',
+              '<td><span class="status-badge ' + statusBadgeClass(status) + '">' + escapeHtml(status) + '</span></td>',
+              '<td>' + escapeHtml(getTimeAgo(task.created_at)) + '</td>',
+              '<td class="table-actions"><button type="button" class="table-action" onclick="viewTaskDetails(' + Number(task.id) + ')">Details</button>' +
+                (isHistoricalIncident(task) ? '<span class="submitted-label">Archived</span>' : (isSubmitted ? '<span class="submitted-label">Proof submitted</span>' : '<button type="button" class="table-action primary" onclick="selectTaskForResolution(' + Number(task.id) + ')">Resolve</button>')) + '</td>',
+              '</tr>'
+            ].join('');
+          }).join(''),
+          '</tbody></table></div>'
+        ].join('');
 
         setHTML(taskQueue, taskHtml);
 
@@ -195,6 +207,129 @@
     return 'medium';
   }
 
+  function urgencyRank(urgency) {
+    var ranks = { critical: 4, high: 3, medium: 2, low: 1 };
+    return ranks[String(urgency || '').trim().toLowerCase()] || 0;
+  }
+
+  function compareOfficerIncidents(left, right) {
+    var leftPriority = Math.max(urgencyRank(left.urgency), urgencyRank(left.priority));
+    var rightPriority = Math.max(urgencyRank(right.urgency), urgencyRank(right.priority));
+    return rightPriority - leftPriority || compareIncidentsNewestFirst(left, right);
+  }
+
+  function isHistoricalIncident(incident) {
+    var status = String(incident && incident.status || '').trim().toLowerCase();
+    return status === 'resolved' || status === 'verified' || status === 'closed' ||
+      status === 'completed' || status === 'action taken / resolved' ||
+      status === 'pending citizen verification';
+  }
+
+  function reportCountBadge(incident) {
+    var count = Math.max(1, Number(incident.report_count) || 0,
+      Number(incident.affected_citizens_count) || 0, (Number(incident.upvote_count) || 0) + 1);
+    return count > 1 ? '<span class="report-count-badge">Reported by ' + count + ' citizens</span>' : '';
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+    });
+  }
+
+  function statusBadgeClass(status) {
+    var normalized = String(status || '').toLowerCase();
+    if (normalized.indexOf('breach') !== -1 || normalized.indexOf('escalat') !== -1 || normalized.indexOf('audit') !== -1) return 'status-escalated';
+    if (normalized.indexOf('resolved') !== -1 || normalized.indexOf('closed') !== -1) return 'status-resolved';
+    if (normalized.indexOf('survey') !== -1 || normalized.indexOf('scheduled') !== -1 || normalized.indexOf('assigned') !== -1) return 'status-progress';
+    return 'status-pending';
+  }
+
+  function updateOfficerMetrics(incidents, activeIncidents) {
+    var now = new Date();
+    var today = now.toDateString();
+    var criticalBreaches = (incidents || []).filter(function (incident) {
+      var isCritical = String(incident.urgency || '').toLowerCase() === 'critical';
+      var isBreached = String(incident.status || '').toLowerCase().indexOf('breach') !== -1;
+      var deadline = new Date(incident.deadline || incident.deadline_at || incident.target_completion_date || '');
+      var isOverdue = Number.isFinite(deadline.getTime()) && deadline < now;
+      return isCritical && (isBreached || (isOverdue && (activeIncidents || []).indexOf(incident) !== -1));
+    }).length;
+    var resolvedToday = (incidents || []).filter(function (incident) {
+      var status = String(incident.status || '').toLowerCase();
+      var resolvedAt = incident.resolved_at || incident.resolvedAt;
+      return (status === 'resolved' || status === 'verified' || status === 'closed' ||
+        status === 'action taken / resolved') && resolvedAt && new Date(resolvedAt).toDateString() === today;
+    }).length;
+    var cells = {};
+    (activeIncidents || []).forEach(function (incident) {
+      if (incident.h3_index) { cells[incident.h3_index] = (cells[incident.h3_index] || 0) + 1; }
+    });
+    var clusterCount = Object.keys(cells).filter(function (cell) { return cells[cell] >= 3; }).length;
+    clusterCount += (activeIncidents || []).filter(function (incident) {
+      return incident.vulnerabilityCluster && incident.vulnerabilityCluster.isCluster;
+    }).length;
+
+    setText($('officerActiveCount'), (activeIncidents || []).length);
+    setText($('officerSlaCount'), criticalBreaches);
+    setText($('officerClusterCount'), clusterCount);
+    setText($('officerResolvedCount'), resolvedToday);
+
+    var auditFlags = $('aiAuditFlags');
+    if (auditFlags) {
+      var flagged = (incidents || []).filter(function (incident) {
+        var status = String(incident.status || '').toLowerCase();
+        return status.indexOf('audit') !== -1 || status.indexOf('breach') !== -1 ||
+          (incident.resolution_audit && incident.resolution_audit.verified === false);
+      });
+      setHTML(auditFlags, flagged.length ? flagged.slice(0, 4).map(function (incident) {
+        return '<div class="audit-row"><span class="audit-indicator"></span><div><strong>#' + escapeHtml(incident.id) + ' · ' + escapeHtml(incident.status) + '</strong><small>' + escapeHtml(incident.location_name || 'Unassigned location') + '</small></div></div>';
+      }).join('') : '<div class="empty-state compact">No audit flags currently.</div>');
+    }
+  }
+
+  function ensureOfficerMap() {
+    var mapElement = $('officerClusterMap');
+    if (!mapElement || !window.L) return null;
+    if (!appState.officerMap) {
+      appState.officerMap = L.map(mapElement, { zoomControl: true }).setView([22.5, 78.0], 4);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(appState.officerMap);
+      appState.officerMapLayer = L.layerGroup().addTo(appState.officerMap);
+    }
+    return appState.officerMap;
+  }
+
+  function renderOfficerIncidentMap(incidents) {
+    var map = ensureOfficerMap();
+    if (!map || !appState.officerMapLayer) return;
+    appState.officerMapLayer.clearLayers();
+    var points = [];
+    (incidents || []).forEach(function (incident) {
+      if (incident.latitude == null || incident.longitude == null) return;
+      var coordinates = normalizeWgs84([incident.latitude, incident.longitude]);
+      if (!coordinates) return;
+      var isCluster = Boolean(incident.vulnerabilityCluster && incident.vulnerabilityCluster.isCluster);
+      var marker = L.circleMarker(coordinates, {
+        radius: isCluster ? 9 : 6,
+        color: isCluster ? '#c2413b' : '#216b8a',
+        fillColor: isCluster ? '#f2a18e' : '#62aac0',
+        fillOpacity: 0.86,
+        weight: 2
+      });
+      marker.bindPopup('<strong>' + escapeHtml(incident.location_name || 'Incident') + '</strong><br>' +
+        escapeHtml(incident.category || 'Civic issue') + ' · ' + escapeHtml(incident.status || 'Pending'));
+      appState.officerMapLayer.addLayer(marker);
+      points.push(coordinates);
+    });
+    if (points.length) {
+      map.fitBounds(points, { padding: [24, 24], maxZoom: 11 });
+    }
+    window.setTimeout(function () { map.invalidateSize(); }, 60);
+  }
+
   function getTimeAgo(dateString) {
     if (!dateString) return 'Unknown';
     var date = new Date(dateString);
@@ -211,8 +346,60 @@
   }
 
   function viewTaskDetails(taskId) {
-    console.log('[officer] View details for task:', taskId);
-    // Could open a modal or navigate to details view
+    var modal = $('incidentDetailsModal');
+    var content = $('incidentDetailsContent');
+    if (modal) { modal.hidden = false; }
+    document.body.classList.add('modal-open');
+    setHTML(content, '<div class="tracking-loading"><span class="spinner"></span> Loading incident #' + escapeHtml(taskId) + '...</div>');
+
+    safeFetch(API_BASE + '/incidents/' + encodeURIComponent(taskId))
+      .then(function (response) {
+        var incident = response && response.data;
+        if (!incident) { throw new Error('Incident details were not returned.'); }
+        appState.latestIncident = incident;
+        appState.location = incident.location_name || appState.location;
+        appState.locationSource = 'incident';
+        appState.status = incident.status || appState.status;
+        appState.category = incident.category || appState.category;
+        appState.urgency = incident.urgency || appState.urgency;
+        appState.h3Index = incident.h3_index || null;
+        var coordinates = normalizeWgs84(incident.coordinates);
+        if (coordinates) {
+          appState.coordinates = coordinates;
+          appState.zoom = 15;
+          flyTo(coordinates, appState.zoom);
+          updateCurrentLocation({ locationName: appState.location, coordinates: coordinates, h3Index: appState.h3Index });
+        }
+        renderEntityCard();
+        renderDprPanel(incident);
+        renderProofAuditBadge(incident);
+        var coordinates = normalizeWgs84(incident.coordinates || [incident.latitude, incident.longitude]);
+        setHTML(content, [
+          '<div class="incident-detail-summary"><div><span class="eyebrow">Ticket</span><strong>#' + escapeHtml(incident.id) + '</strong></div>',
+          '<span class="status-badge ' + statusBadgeClass(incident.status) + '">' + escapeHtml(incident.status || 'Pending') + '</span></div>',
+          '<div class="incident-detail-grid">',
+          '<div><small>Location</small><strong>' + escapeHtml(incident.location_name || 'Unassigned') + '</strong></div>',
+          '<div><small>Category</small><strong>' + escapeHtml(incident.category || 'General Infrastructure') + '</strong></div>',
+          '<div><small>Urgency</small><strong>' + escapeHtml(incident.urgency || 'Medium') + '</strong></div>',
+          '<div><small>Reported</small><strong>' + escapeHtml(incident.created_at ? new Date(incident.created_at).toLocaleString() : 'Unknown') + '</strong></div>',
+          '<div><small>Assigned department</small><strong>' + escapeHtml(incident.assigned_ministry || 'Not assigned') + '</strong></div>',
+          '<div><small>Coordinates</small><strong>' + escapeHtml(coordinates ? coordinates.map(function (value) { return value.toFixed(5); }).join(', ') : 'Not provided') + '</strong></div>',
+          '<div><small>H3 index</small><strong>' + escapeHtml(incident.h3_index || 'Not indexed') + '</strong></div>',
+          '<div><small>Resolution deadline</small><strong>' + escapeHtml(incident.target_completion_date || 'Not scheduled') + '</strong></div>',
+          '</div><div class="incident-detail-description"><small>Complaint description</small><p>' + escapeHtml(incident.transcript || 'No description provided.') + '</p></div>',
+          '<div class="incident-detail-description"><small>Evidence</small><p>' + (incident.has_original_photo || incident.original_photo ? 'A complaint image is attached.' : 'No complaint image attached.') + '</p></div>'
+        ].join(''));
+      })
+      .catch(function (error) {
+        console.warn('[officer] Could not load task details:', error && error.message);
+        setHTML(content, '<div class="tracking-error" role="alert">' + escapeHtml(error.message || 'Could not load incident details.') + '</div>');
+      });
+  }
+
+  function closeIncidentDetailsModal() {
+    var modal = $('incidentDetailsModal');
+    if (modal) { modal.hidden = true; }
+    document.body.classList.remove('modal-open');
   }
 
   function selectTaskForResolution(taskId) {
@@ -221,23 +408,26 @@
       taskSelect.value = taskId;
     }
 
-    var resolutionSection = $('resolutionProofSection');
-    if (resolutionSection) {
-      resolutionSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      resolutionSection.classList.remove('resolution-proof-highlight');
-      void resolutionSection.offsetWidth;
-      resolutionSection.classList.add('resolution-proof-highlight');
-      window.setTimeout(function() {
-        resolutionSection.classList.remove('resolution-proof-highlight');
-      }, 2200);
-    }
+    var modal = $('resolutionProofModal');
+    if (modal) { modal.hidden = false; }
+    document.body.classList.add('modal-open');
+    var firstInput = $('officerBeforePhoto');
+    if (firstInput) { firstInput.focus(); }
   }
 
-  function submitOfficerResolution(event) {
+  function closeResolutionProofModal() {
+    var modal = $('resolutionProofModal');
+    if (modal) { modal.hidden = true; }
+    document.body.classList.remove('modal-open');
+  }
+
+  async function submitOfficerResolution(event) {
     event.preventDefault();
 
     var taskSelect = $('officerTaskSelect');
     var result = $('officerResolutionResult');
+    var beforeInput = $('officerBeforePhoto');
+    var afterInput = $('officerAfterPhoto');
     var taskId = taskSelect && taskSelect.value;
     if (!taskId) {
       if (result) {
@@ -246,25 +436,59 @@
       }
       return;
     }
-
-    appState.resolvedOfficerTasks[taskId] = true;
     if (result) {
-      result.textContent = 'Resolution verified! Task marked as completed and EXIF metadata logged.';
-      result.style.color = '#10B981';
+      result.textContent = '';
+      result.style.color = '#F87171';
+    }
+    var beforeFile = beforeInput && beforeInput.files && beforeInput.files[0];
+    var afterFile = afterInput && afterInput.files && afterInput.files[0];
+    if (!beforeFile || !afterFile) {
+      if (result) {
+        result.textContent = 'Both resolution proof images are required to submit verification.';
+        result.style.color = '#F87171';
+      }
+      return;
     }
 
-    var taskCards = document.querySelectorAll('.officer-task-item');
-    Array.prototype.forEach.call(taskCards, function(taskCard) {
-      if (taskCard.getAttribute('data-task-id') !== String(taskId)) return;
-      taskCard.classList.add('is-resolved');
-      var resolveButton = taskCard.querySelector('.task-action-btn.primary');
-      if (resolveButton) {
-        resolveButton.textContent = 'Resolved ✓';
-        resolveButton.disabled = true;
-        resolveButton.classList.remove('primary');
-        resolveButton.classList.add('resolved');
+    var formData = new FormData();
+    formData.append('incidentId', taskId);
+    formData.append('originalImage', beforeFile);
+    formData.append('resolutionImage', afterFile);
+    var notes = $('officerResolutionNotes');
+    formData.append('notes', notes ? notes.value : '');
+
+    var headers = {};
+    var token = localStorage.getItem('officerToken') || localStorage.getItem('authToken');
+    if (token) { headers.Authorization = 'Bearer ' + token; }
+
+    try {
+      var response = await fetch(API_BASE + '/incidents/' + encodeURIComponent(taskId) + '/resolution', {
+        method: 'POST',
+        headers: headers,
+        body: formData
+      });
+      var payload = await response.json().catch(function () { return {}; });
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || 'Resolution proof submission failed.');
       }
-    });
+
+      var nextStatus = (payload.data && payload.data.status) || payload.status || 'Pending review';
+      if (nextStatus === 'Pending Citizen Verification' || nextStatus === 'Resolved') {
+        appState.resolvedOfficerTasks[taskId] = true;
+      }
+      if (result) {
+        result.textContent = payload.status === 'PENDING_MANUAL_AUDIT'
+          ? 'Both images were received. The proof requires manual review before resolution.'
+          : 'Both images were validated. Incident status: ' + nextStatus + '.';
+        result.style.color = payload.status === 'PENDING_MANUAL_AUDIT' ? '#F59E0B' : '#10B981';
+      }
+      loadOfficerTasks();
+    } catch (error) {
+      if (result) {
+        result.textContent = error && error.message ? error.message : 'Could not submit resolution proof.';
+        result.style.color = '#F87171';
+      }
+    }
   }
 
   // Make functions globally accessible
@@ -600,8 +824,9 @@
   // ── 3. WEB SPEECH API VOICE INGESTION ───────────────────────────
   var recordBtn = $('startRecording');
   // Editable transcript field — voice streams in, but manual edits win.
-  var transcriptBox = $('transcriptInput') || $('transcriptBox');
+  var transcriptBox = $('transcriptInput');
   var recordingIndicator = $('recordingIndicator');
+  var voiceFeedback = $('voiceFeedback');
   var languageSelect = $('languageSelect');
 
   // Tracks manual edits so live speech never clobbers corrections.
@@ -611,18 +836,26 @@
   var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   var recognition = null;
   var isRecording = false;
+  var recognitionError = false;
 
   function setRecordingUi(active) {
     isRecording = active;
     if (recordBtn) {
-      recordBtn.textContent = active ? 'Listening... Stop' : 'Start Recording';
-      recordBtn.style.backgroundColor = active ? '#dc2626' : '';
-      recordBtn.style.color = active ? '#fff' : '';
+      recordBtn.classList.toggle('is-recording', active);
+      recordBtn.setAttribute('aria-pressed', String(active));
+      setHTML(recordBtn, active
+        ? '<span class="record-button-icon" aria-hidden="true">■</span> Stop recording'
+        : '<span class="record-button-icon" aria-hidden="true">●</span> Record voice');
     }
     if (recordingIndicator) {
       recordingIndicator.classList.toggle('hidden', !active);
-      recordingIndicator.classList.toggle('pulse', active);
     }
+  }
+
+  function showVoiceFeedback(message) {
+    if (!voiceFeedback) return;
+    voiceFeedback.textContent = message;
+    voiceFeedback.classList.remove('hidden');
   }
 
   function updateTranscript(text, fromSpeech) {
@@ -646,22 +879,26 @@
     if (!recordBtn) { return; }
 
     if (!SpeechRecognition) {
-      recordBtn.addEventListener('click', function () {
-        window.alert('Web Speech API is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
-      });
+      recordBtn.disabled = true;
+      showVoiceFeedback('Voice transcription is not supported in this browser. You can still type your complaint below.');
       return;
     }
 
     recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-    recognition.lang = (languageSelect && languageSelect.value) || 'en-IN';
+    recognition.lang = (languageSelect && languageSelect.value) || navigator.language || 'en-IN';
 
     var finalTranscript = '';
 
     recognition.onstart = function () {
-      finalTranscript = '';
+      recognitionError = false;
+      userEditedTranscript = false;
+      finalTranscript = ((transcriptBox && transcriptBox.value) || '').trim();
+      if (finalTranscript) { finalTranscript += ' '; }
+      lastSpeechText = (transcriptBox && transcriptBox.value) || '';
+      if (voiceFeedback) { voiceFeedback.classList.add('hidden'); }
       setRecordingUi(true);
     };
 
@@ -681,32 +918,36 @@
 
     recognition.onerror = function (event) {
       var code = event && event.error;
+      recognitionError = true;
       console.warn('[speech] Error:', code);
       setRecordingUi(false);
 
       if (code === 'not-allowed' || code === 'service-not-allowed') {
-        window.alert('Microphone access was blocked. Please allow microphone permissions in the browser address bar and retry.');
+        showVoiceFeedback('Microphone access was denied. Allow microphone permission in your browser, or type your complaint below.');
       } else if (code === 'no-speech') {
-        console.warn('[speech] No speech detected.');
+        showVoiceFeedback('No speech was detected. Try recording again or type your complaint below.');
       } else if (code === 'audio-capture') {
-        window.alert('No microphone was found. Please connect a microphone and retry.');
+        showVoiceFeedback('No microphone was found. Connect a microphone or type your complaint below.');
+      } else {
+        showVoiceFeedback('Voice transcription stopped. You can retry or continue by typing below.');
       }
     };
 
     recognition.onend = function () {
       setRecordingUi(false);
-      submitTranscript();
+      if (!recognitionError && finalTranscript.trim()) {
+        showVoiceFeedback('Transcript ready. Review your description, then submit the complaint.');
+      }
     };
 
     recordBtn.addEventListener('click', function () {
       if (!isRecording) {
         try {
-          recognition.lang = (languageSelect && languageSelect.value) || 'en-IN';
+          recognition.lang = (languageSelect && languageSelect.value) || navigator.language || 'en-IN';
           recognition.start();
         } catch (err) {
-          // start() throws if called while already running.
           console.warn('[speech] Start warning:', err && err.message);
-          setRecordingUi(true);
+          showVoiceFeedback('Could not start voice capture. Check microphone permission or type your complaint below.');
         }
       } else {
         try { recognition.stop(); } catch (err) { console.warn('[speech] Stop warning:', err && err.message); }
@@ -725,16 +966,30 @@
     // Immediate client-side grounding so the map re-centers even before the
     // server response lands (and even if the backend is unreachable).
     var localRegion = resolveClientRegion(transcript);
-    if (localRegion) { applyRegionGrounding(localRegion); }
+    if (localRegion && appState.locationSource !== 'browser' && appState.locationSource !== 'map') {
+      applyRegionGrounding(localRegion);
+    }
+    var hasSelectedCoordinates = appState.locationSource === 'browser' || appState.locationSource === 'map';
 
     safeFetch(API_BASE + '/ingest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript: transcript, coordinates: appState.coordinates })
+      body: JSON.stringify({
+        transcript: transcript,
+        category: ($('categorySelect') && $('categorySelect').value) || undefined,
+        original_photo: appState.selectedPhotoDataUrl || undefined,
+        coordinates: hasSelectedCoordinates ? appState.coordinates : null,
+        locationName: hasSelectedCoordinates ? appState.location : undefined,
+        locationSource: appState.locationSource
+      })
     })
       .then(function (res) {
         var incident = res.data || res;
         appState.latestIncident = incident;
+        appState.selectedPhotoDataUrl = null;
+        var photoInput = $('citizenPhotoInput');
+        if (photoInput) { photoInput.value = ''; }
+        setText($('citizenPhotoName'), incident.id ? 'Photo attached to report #' + incident.id : 'Report submitted.');
         appState.location = incident.location_name || appState.location;
         appState.category = incident.category || appState.category;
         appState.urgency = incident.urgency || appState.urgency;
@@ -992,6 +1247,7 @@
     if (!region) { return; }
     var coords = normalizeWgs84(region.coordinates) || appState.coordinates;
     appState.location = region.locationName;
+    appState.locationSource = 'catalog';
     appState.coordinates = coords;
     appState.h3Index = region.h3Index;
     appState.category = region.category;
@@ -1419,9 +1675,12 @@
     applyComparisonSelection({
       locationName: 'Pinned Satellite Pick (' + coords[0].toFixed(5) + ', ' + coords[1].toFixed(5) + ')',
       coordinates: coords,
-      h3Index: appState.h3Index || H3_DELTA_CELL,
-      zoom: Math.max(appState.zoom || 0, DELTA_MIN_ZOOM)
+      h3Index: null,
+      zoom: Math.max(appState.zoom || 0, 13)
     });
+    appState.locationSource = 'map';
+    var status = $('locationSelectionStatus');
+    if (status) { status.textContent = 'Map location selected: ' + coords.map(function (value) { return value.toFixed(5); }).join(', '); }
   }
 
   // Collapses / restores the split-screen comparison.
@@ -1522,18 +1781,190 @@
     var text = (transcriptBox && transcriptBox.value) || '';
     appState.transcript = text;
     var region = resolveClientRegion(text);
-    if (region) { applyRegionGrounding(region); }
+    if (region && appState.locationSource !== 'browser' && appState.locationSource !== 'map') {
+      applyRegionGrounding(region);
+    }
+  }
+
+  function compareIncidentsNewestFirst(left, right) {
+    var leftCreated = Date.parse(left.created_at || left.createdAt || '');
+    var rightCreated = Date.parse(right.created_at || right.createdAt || '');
+    var leftHasDate = Number.isFinite(leftCreated);
+    var rightHasDate = Number.isFinite(rightCreated);
+    if (leftHasDate && rightHasDate && leftCreated !== rightCreated) {
+      return rightCreated - leftCreated;
+    }
+    if (leftHasDate !== rightHasDate) { return rightHasDate ? 1 : -1; }
+
+    var leftId = Number(left.id);
+    var rightId = Number(right.id);
+    if (Number.isFinite(leftId) && Number.isFinite(rightId) && leftId !== rightId) {
+      return rightId - leftId;
+    }
+    return String(right.id || '').localeCompare(String(left.id || ''), undefined, { numeric: true });
+  }
+
+  function getMostRecentIncident(incidents) {
+    return (incidents || []).slice().sort(compareIncidentsNewestFirst)[0] || null;
+  }
+
+  function renderGrievanceTimeline(incident) {
+    var timeline = $('grievanceTimeline');
+    if (!timeline) return;
+    var status = String(incident.status || 'Pending Survey');
+    var normalized = status.toLowerCase();
+    var resolutionReached = normalized.indexOf('citizen verification') !== -1 || normalized === 'resolved' || normalized === 'closed';
+    var closed = normalized === 'resolved' || normalized === 'closed';
+    var steps = [
+      { title: 'Report received', detail: incident.created_at ? new Date(incident.created_at).toLocaleString() : 'Your report is recorded.', complete: true },
+      { title: 'Agency review', detail: status === 'Pending Survey' ? 'Awaiting an initial field survey.' : 'Your report is being reviewed by the responsible team.', complete: normalized !== 'pending survey', current: normalized === 'pending survey' },
+      { title: 'Resolution verification', detail: resolutionReached ? status : 'The field team will attach resolution evidence here.', complete: resolutionReached, current: !resolutionReached && normalized !== 'pending survey' },
+      { title: 'Completed', detail: closed ? 'The resolution was confirmed.' : 'We will notify you when the issue is closed.', complete: closed, current: false }
+    ];
+    setHTML(timeline, [
+      '<div class="tracking-ticket"><span>Ticket #' + escapeHtml(incident.id) + '</span><span class="status-badge ' + statusBadgeClass(status) + '">' + escapeHtml(status) + '</span></div>',
+      '<p class="tracking-location">' + escapeHtml(incident.location_name || 'Location pending') + ' · ' + escapeHtml(incident.category || 'Civic issue') + '</p>',
+      '<ol class="timeline-list">',
+      steps.map(function (step, index) {
+        return '<li class="timeline-step ' + (step.complete ? 'complete ' : '') + (step.current ? 'current' : '') + '"><span class="timeline-node">' + (step.complete ? '✓' : String(index + 1).padStart(2, '0')) + '</span><div><strong>' + escapeHtml(step.title) + '</strong><small>' + escapeHtml(step.detail) + '</small></div></li>';
+      }).join(''),
+      '</ol>'
+    ].join(''));
+  }
+
+  function bindDashboardControls() {
+    var complaintButton = $('submitComplaintButton');
+    if (complaintButton) { complaintButton.addEventListener('click', submitTranscript); }
+
+    var categorySelect = $('categorySelect');
+    if (categorySelect) {
+      categorySelect.addEventListener('change', function () {
+        if (categorySelect.value) {
+          appState.category = categorySelect.value;
+          renderEntityCard();
+        }
+      });
+    }
+
+    var photoInput = $('citizenPhotoInput');
+    if (photoInput) {
+      photoInput.addEventListener('change', function () {
+        var file = photoInput.files && photoInput.files[0];
+        var name = $('citizenPhotoName');
+        if (!file) {
+          appState.selectedPhotoDataUrl = null;
+          setText(name, '');
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          photoInput.value = '';
+          appState.selectedPhotoDataUrl = null;
+          setText(name, 'Choose an image smaller than 10 MB.');
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+          appState.selectedPhotoDataUrl = typeof reader.result === 'string' ? reader.result : null;
+          setText(name, appState.selectedPhotoDataUrl ? file.name + ' · Ready to attach' : 'Could not read the selected image.');
+        };
+        reader.onerror = function () { setText(name, 'Could not read the selected image.'); };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    var tracker = $('trackGrievanceForm');
+    if (tracker) {
+      tracker.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var id = ($('grievanceTicketId') && $('grievanceTicketId').value || '').trim();
+        var timeline = $('grievanceTimeline');
+        if (!id) {
+          setHTML(timeline, '<div class="tracking-error" role="alert">Enter the ticket number from your confirmation.</div>');
+          return;
+        }
+        setHTML(timeline, '<div class="tracking-loading"><span class="spinner"></span> Looking up your report...</div>');
+        safeFetch(API_BASE + '/incidents/' + encodeURIComponent(id))
+          .then(function (response) {
+            if (!response || !response.data) throw new Error('No report was found for that ticket number.');
+            renderGrievanceTimeline(response.data);
+          })
+          .catch(function (error) {
+            setHTML(timeline, '<div class="tracking-error" role="alert">' + escapeHtml(error.message || 'Unable to look up this report.') + '</div>');
+          });
+      });
+    }
+
+    document.querySelectorAll('[data-officer-filter]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        appState.officerFilter = button.getAttribute('data-officer-filter') || 'all';
+        document.querySelectorAll('[data-officer-filter]').forEach(function (item) {
+          var active = item === button;
+          item.classList.toggle('active', active);
+          item.setAttribute('aria-selected', String(active));
+        });
+        loadOfficerTasks();
+      });
+    });
+
+    var refreshButton = $('refreshOfficerTasks');
+    if (refreshButton) { refreshButton.addEventListener('click', loadOfficerTasks); }
+
+    ['closeResolutionModal', 'cancelResolutionModal'].forEach(function (id) {
+      var button = $(id);
+      if (button) { button.addEventListener('click', closeResolutionProofModal); }
+    });
+    var detailsClose = $('closeIncidentDetails');
+    if (detailsClose) { detailsClose.addEventListener('click', closeIncidentDetailsModal); }
+    var detailsModal = $('incidentDetailsModal');
+    if (detailsModal) {
+      detailsModal.addEventListener('click', function (event) {
+        if (event.target === detailsModal) { closeIncidentDetailsModal(); }
+      });
+    }
+    var modal = $('resolutionProofModal');
+    if (modal) {
+      modal.addEventListener('click', function (event) {
+        if (event.target === modal) { closeResolutionProofModal(); }
+      });
+    }
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && modal && !modal.hidden) { closeResolutionProofModal(); }
+      if (event.key === 'Escape' && detailsModal && !detailsModal.hidden) { closeIncidentDetailsModal(); }
+    });
   }
 
   // Load persisted incidents from the database.
   function loadIncidents() {
     return safeFetch(API_BASE + '/incidents')
       .then(function (res) {
-        appState.incidents = (res && res.data) || [];
-        if (appState.incidents.length && !appState.latestIncident) {
-          var latest = appState.incidents[0];
+        appState.incidents = ((res && res.data) || []).slice().sort(compareIncidentsNewestFirst);
+        if (appState.incidents.length) {
+          var latest = getMostRecentIncident(appState.incidents);
           appState.latestIncident = latest;
+          appState.location = latest.location_name || appState.location;
+          appState.locationSource = 'incident';
           appState.status = latest.status || appState.status;
+          appState.category = latest.category || appState.category;
+          appState.urgency = latest.urgency || appState.urgency;
+          appState.h3Index = latest.h3_index || null;
+          var coordinates = normalizeWgs84(latest.coordinates);
+          if (coordinates) {
+            appState.coordinates = coordinates;
+            appState.zoom = 13;
+            flyTo(coordinates, appState.zoom);
+            updateCurrentLocation({
+              locationName: appState.location,
+              coordinates: coordinates,
+              h3Index: appState.h3Index
+            });
+          } else {
+            updateCurrentLocation({
+              locationName: appState.location,
+              coordinates: null,
+              h3Index: null
+            });
+          }
+          renderEntityCard();
           renderDprPanel(latest);
           renderProofAuditBadge(latest);
 
@@ -1543,15 +1974,13 @@
             renderVulnerabilityClusterAlert(latest.vulnerabilityCluster);
             renderHazardOverlay(latest.vulnerabilityCluster);
           }
-        } else if (appState.latestIncident) {
-          renderProofAuditBadge(appState.latestIncident);
-
-          // Check for vulnerability cluster in existing latest incident
-          if (appState.latestIncident.vulnerabilityCluster && appState.latestIncident.vulnerabilityCluster.isCluster) {
-            appState.vulnerabilityCluster = appState.latestIncident.vulnerabilityCluster;
-            renderVulnerabilityClusterAlert(appState.latestIncident.vulnerabilityCluster);
-            renderHazardOverlay(appState.latestIncident.vulnerabilityCluster);
-          }
+        } else {
+          appState.latestIncident = null;
+          appState.vulnerabilityCluster = null;
+          clearVulnerabilityClusterAlert();
+          clearHazardOverlay();
+          renderDprPanel(null);
+          renderProofAuditBadge(null);
         }
       })
       .catch(function (err) {
@@ -1807,61 +2236,66 @@
     ].join('');
   }
 
-  function exportDpr() {
+  async function exportDpr() {
     if (dprStatus) { dprStatus.textContent = 'Fetching live database records...'; }
 
-    // The active comparative-slider selection is what gets exported, so the DPR
-    // can never be generated against a stale map location.
-    var selection = appState.currentLocation || updateCurrentLocation({
-      locationName: appState.location,
-      coordinates: appState.coordinates,
-      h3Index: appState.h3Index
-    });
-    if (selection && selection.locationName) { appState.location = selection.locationName; }
-    if (selection && selection.coordinates) { appState.coordinates = selection.coordinates; }
-    if (selection && selection.h3Index) { appState.h3Index = selection.h3Index; }
+    try {
+      await loadIncidents();
+      var latest = getMostRecentIncident(appState.incidents);
+      if (latest) { appState.latestIncident = latest; }
 
-    var payload = {
-      // Always export the exact text currently in the editable field.
-      transcript: (transcriptBox && transcriptBox.value) || appState.transcript,
-      locationName: appState.location,
-      category: appState.category,
-      h3Index: appState.h3Index,
-      coordinates: appState.coordinates,
-      urgency: appState.urgency,
-      // Explicit satellite telemetry provenance for the generated DPR PDF.
-      historicalTileTime: TILE_TIME_HISTORICAL,
-      currentTileTime: TILE_TIME_CURRENT,
-      crs: CRS_EPSG4326,
-      satelliteTelemetryNote: SPATIAL_DIFFERENCING_NOTE,
-      footprintAlterationPct: DELTA_FOOTPRINT_ALTERATION,
-      satelliteTelemetry: appState.satelliteTelemetry || null
-    };
-    if (appState.latestIncident && appState.latestIncident.id) {
-      payload.id = appState.latestIncident.id;
-    }
+      // A current incident takes precedence; otherwise use the active map selection.
+      if (latest) {
+        appState.location = latest.location_name || appState.location;
+        appState.category = latest.category || appState.category;
+        appState.urgency = latest.urgency || appState.urgency;
+        appState.h3Index = latest.h3_index || null;
+        var latestCoordinates = normalizeWgs84(latest.coordinates);
+        if (latestCoordinates) { appState.coordinates = latestCoordinates; }
+      } else {
+        var selection = appState.currentLocation || updateCurrentLocation({
+          locationName: appState.location,
+          coordinates: appState.coordinates,
+          h3Index: appState.h3Index
+        });
+        if (selection && selection.locationName) { appState.location = selection.locationName; }
+        if (selection && selection.coordinates) { appState.coordinates = selection.coordinates; }
+        if (selection && selection.h3Index) { appState.h3Index = selection.h3Index; }
+      }
 
-    safeFetch(API_BASE + '/dpr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-      .then(function (dpr) {
-        var win = window.open('', '_blank');
-        if (!win) {
-          window.alert('Please allow pop-ups to export the DPR report.');
-          if (dprStatus) { dprStatus.textContent = 'Pop-up blocked'; }
-          return;
-        }
-        win.document.open();
-        win.document.write(buildReportHtml(dpr));
-        win.document.close();
-        if (dprStatus) { dprStatus.textContent = 'Report ready — print preview opened'; }
-      })
-      .catch(function (err) {
-        console.error('[dpr] export error:', err && err.message);
-        if (dprStatus) { dprStatus.textContent = 'Export failed: ' + (err && err.message); }
+      var payload = {
+        transcript: latest ? latest.transcript : ((transcriptBox && transcriptBox.value) || appState.transcript),
+        locationName: appState.location,
+        category: appState.category,
+        h3Index: appState.h3Index,
+        coordinates: appState.coordinates,
+        urgency: appState.urgency,
+        historicalTileTime: TILE_TIME_HISTORICAL,
+        currentTileTime: TILE_TIME_CURRENT,
+        crs: CRS_EPSG4326,
+        satelliteTelemetryNote: SPATIAL_DIFFERENCING_NOTE,
+        footprintAlterationPct: DELTA_FOOTPRINT_ALTERATION,
+        satelliteTelemetry: appState.satelliteTelemetry || null
+      };
+      var dpr = await safeFetch(API_BASE + '/dpr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
+      var win = window.open('', '_blank');
+      if (!win) {
+        window.alert('Please allow pop-ups to export the DPR report.');
+        if (dprStatus) { dprStatus.textContent = 'Pop-up blocked'; }
+        return;
+      }
+      win.document.open();
+      win.document.write(buildReportHtml(dpr));
+      win.document.close();
+      if (dprStatus) { dprStatus.textContent = 'Report ready — print preview opened'; }
+    } catch (err) {
+      console.error('[dpr] export error:', err && err.message);
+      if (dprStatus) { dprStatus.textContent = 'Export failed: ' + (err && err.message); }
+    }
   }
 
   // Dynamic DPR generator bound directly to window.appState so external
@@ -1876,19 +2310,110 @@
   var scanBtn = $('scanIncidentButton');
   function initScanButton() {
     if (!scanBtn) { return; }
+    var modal = $('incidentScanModal');
+    var imageInput = $('incidentScanFile');
+    var preview = $('incidentScanPreview');
+    var description = $('incidentScanDescription');
+    var feedback = $('incidentScanFeedback');
+    var usePhotoButton = $('useIncidentScan');
+    var selectedImage = null;
+
+    function closeScanModal() {
+      if (modal) { modal.hidden = true; }
+      document.body.classList.remove('modal-open');
+    }
+
     scanBtn.addEventListener('click', function () {
-      scanBtn.disabled = true;
-      var original = scanBtn.textContent;
-      scanBtn.textContent = 'Scanning...';
-      // No dedicated image-scan endpoint is required for the core flow;
-      // synthesise a structured complaint from the analysed frame.
-      setTimeout(function () {
-        updateTranscript('Structural infrastructure failure detected along the transport corridor.');
-        scanBtn.disabled = false;
-        scanBtn.textContent = original;
-        submitTranscript();
-      }, 700);
+      if (!modal) return;
+      modal.hidden = false;
+      document.body.classList.add('modal-open');
+      window.setTimeout(function () { if (imageInput) imageInput.focus(); }, 30);
     });
+
+    ['closeIncidentScan', 'cancelIncidentScan'].forEach(function (id) {
+      var button = $(id);
+      if (button) { button.addEventListener('click', closeScanModal); }
+    });
+    if (modal) {
+      modal.addEventListener('click', function (event) {
+        if (event.target === modal) closeScanModal();
+      });
+    }
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && modal && !modal.hidden) closeScanModal();
+    });
+    if (imageInput) {
+      imageInput.addEventListener('change', function () {
+        var file = imageInput.files && imageInput.files[0];
+        selectedImage = null;
+        if (!file) return;
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(String(file.type || '').toLowerCase())) {
+          imageInput.value = '';
+          showScanMessage('Choose a JPEG, PNG, or WebP image.');
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          imageInput.value = '';
+          showScanMessage('Choose an image smaller than 10 MB.');
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+          selectedImage = typeof reader.result === 'string' ? reader.result : null;
+          if (selectedImage && preview) {
+            preview.src = selectedImage;
+            preview.classList.remove('hidden');
+          }
+          if (usePhotoButton) { usePhotoButton.disabled = !selectedImage; }
+          showScanMessage(selectedImage ? 'Photo ready for civic screening.' : 'Could not read that image. Try another file.');
+        };
+        reader.onerror = function () { showScanMessage('Could not read that image. Try another file.'); };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function showScanMessage(message) {
+      if (!feedback) return;
+      feedback.textContent = message;
+      feedback.classList.remove('hidden');
+    }
+
+    if (usePhotoButton) {
+      usePhotoButton.addEventListener('click', async function () {
+        if (!selectedImage) {
+          showScanMessage('Choose an image before continuing.');
+          return;
+        }
+        usePhotoButton.disabled = true;
+        usePhotoButton.textContent = 'Checking image...';
+        var chosenCategory = ($('categorySelect') && $('categorySelect').value) || 'General Infrastructure';
+        var transcript = (description && description.value || '').trim() ||
+          'Civic issue visible in the attached photo. Add the exact issue and location before submitting.';
+        try {
+          await safeFetch(API_BASE + '/reports/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: selectedImage, transcript: transcript, category: chosenCategory })
+          });
+          appState.selectedPhotoDataUrl = selectedImage;
+          appState.category = chosenCategory;
+          updateTranscript(transcript, false);
+          setText($('citizenPhotoName'), (imageInput.files[0].name || 'Photo') + ' · Ready for complaint triage');
+          renderEntityCard();
+          closeScanModal();
+          imageInput.value = '';
+          selectedImage = null;
+          if (preview) { preview.removeAttribute('src'); preview.classList.add('hidden'); }
+          if (description) { description.value = ''; }
+          if (transcriptBox) { transcriptBox.focus(); }
+        } catch (error) {
+          showScanMessage(error && error.message ? error.message : 'Image screening failed. Try another image.');
+        } finally {
+          usePhotoButton.disabled = !selectedImage;
+          usePhotoButton.textContent = 'Use photo';
+        }
+      });
+    }
   }
 
   // ── OFFLINE PWA QUEUEING & SYNC ───────────────────────────────────
@@ -2085,10 +2610,10 @@
 
     if (appState.isOnline) {
       statusEl.className = 'connection-status online';
-      statusEl.textContent = '🟢 Online';
+      setHTML(statusEl, '<span class="status-light" aria-hidden="true"></span><span>System Online · Port 5000</span>');
     } else {
       statusEl.className = 'connection-status offline';
-      statusEl.textContent = '🔴 Offline';
+      setHTML(statusEl, '<span class="status-light" aria-hidden="true"></span><span>System offline</span>');
     }
   }
 
@@ -2210,6 +2735,7 @@
     });
 
     initRoleSwitching();
+    bindDashboardControls();
     var officerResolutionForm = $('officerResolutionForm');
     if (officerResolutionForm) {
       officerResolutionForm.addEventListener('submit', submitOfficerResolution);
@@ -2236,6 +2762,40 @@
       coordinates: appState.coordinates,
       h3Index: appState.h3Index
     });
+
+    var locationButton = $('useCurrentLocation');
+    if (locationButton) {
+      locationButton.addEventListener('click', function () {
+        var status = $('locationSelectionStatus');
+        if (!navigator.geolocation) {
+          if (status) { status.textContent = 'Browser geolocation is unavailable. Select a point on the map instead.'; }
+          return;
+        }
+        if (status) { status.textContent = 'Requesting your browser location...'; }
+        navigator.geolocation.getCurrentPosition(function (position) {
+          var coords = normalizeWgs84([position.coords.latitude, position.coords.longitude]);
+          if (!coords) {
+            if (status) { status.textContent = 'The browser returned invalid coordinates.'; }
+            return;
+          }
+          appState.location = 'Browser-selected location';
+          appState.locationSource = 'browser';
+          appState.coordinates = coords;
+          appState.h3Index = null;
+          appState.zoom = 15;
+          flyTo(coords, appState.zoom);
+          if (comparisonMap) { comparisonMap.setView(coords, appState.zoom); }
+          updateCurrentLocation({ locationName: appState.location, coordinates: coords, h3Index: null });
+          renderEntityCard();
+          if (status) { status.textContent = 'Browser location selected: ' + coords.map(function (value) { return value.toFixed(5); }).join(', '); }
+        }, function (error) {
+          var message = error && error.code === error.PERMISSION_DENIED
+            ? 'Location access was denied. Select a point on the map instead.'
+            : 'Could not determine your location. Select a point on the map instead.';
+          if (status) { status.textContent = message; }
+        }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+      });
+    }
 
     var compareBtn = $('compareToggle');
     if (compareBtn) {

@@ -103,7 +103,8 @@ class FileStore {
 
   all() {
     return [...this.records].sort((a, b) =>
-      new Date(b.created_at) - new Date(a.created_at)
+      (new Date(b.created_at) - new Date(a.created_at)) ||
+      (Number(b.id) - Number(a.id))
     );
   }
 
@@ -140,6 +141,8 @@ class FileStore {
       resolution_proof_path: data.resolution_proof_path || data.proof_file_path || null,
       resolution_notes: data.resolution_notes || data.notes || null,
       upvote_count: Number(data.upvote_count) || 0,
+      report_count: Math.max(1, Number(data.report_count) || 1),
+      sub_reports: Array.isArray(data.sub_reports || data.subReports) ? (data.sub_reports || data.subReports) : [],
       affected_citizens_count: Number(data.affected_citizens_count) || 0,
       created_at: data.created_at || new Date().toISOString()
     };
@@ -241,8 +244,8 @@ const db = {
            latitude, longitude, assigned_ministry, assigned_contractor, deadline,
            target_completion_date, priority, original_photo, resolution_audit,
            resolution_proof_path, resolution_notes, resolved_at, penalty_status,
-           penalty_tier, source, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, COALESCE($22, NOW()))
+            penalty_tier, source, report_count, created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22, COALESCE($23, NOW()))
         RETURNING *;
       `;
       const params = [
@@ -267,6 +270,7 @@ const db = {
         data.penaltyStatus || data.penalty_status || 'On Track',
         data.penaltyTier || data.penalty_tier || null,
         data.source || 'Web Portal',
+        Math.max(1, Number(data.report_count) || 1),
         data.created_at || null
       ];
       const { rows } = await this.pool.query(sql, params);
@@ -284,6 +288,19 @@ const db = {
       this.fileStore = new FileStore();
     }
     return this.fileStore.all();
+  },
+
+  async getLatestIncident() {
+    if (this.pool) {
+      const { rows } = await this.pool.query(
+        'SELECT * FROM incidents ORDER BY created_at DESC, id DESC LIMIT 1;'
+      );
+      return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
+    return this.fileStore.all()[0] || null;
   },
 
   async getIncidentById(id) {
@@ -315,7 +332,8 @@ const db = {
                resolved_at = COALESCE($13, resolved_at),
                penalty_status = COALESCE($14, penalty_status),
                penalty_tier = COALESCE($15, penalty_tier),
-               source = COALESCE($16, source)
+               source = COALESCE($16, source),
+               report_count = COALESCE($17, report_count, 1)
          WHERE id = $1
          RETURNING *;`,
         [
@@ -334,7 +352,8 @@ const db = {
           patch.resolved_at || patch.resolvedAt || null,
           patch.penaltyStatus || patch.penalty_status || null,
           patch.penaltyTier || patch.penalty_tier || null,
-          patch.source || null
+          patch.source || null,
+          patch.report_count == null ? null : Math.max(1, Number(patch.report_count) || 1)
         ]
       );
       return rows[0] || null;
@@ -343,6 +362,68 @@ const db = {
       this.fileStore = new FileStore();
     }
     return this.fileStore.update(id, patch);
+  },
+
+  async incrementIncidentReportCount(id) {
+    if (this.pool) {
+      const { rows } = await this.pool.query(
+        'UPDATE incidents SET report_count = COALESCE(report_count, 1) + 1 WHERE id = $1 RETURNING *;',
+        [id]
+      );
+      return rows[0] || null;
+    }
+    if (!this.fileStore) {
+      this.fileStore = new FileStore();
+    }
+    const record = this.fileStore.findById(id);
+    if (!record) return null;
+    record.report_count = Math.max(1, Number(record.report_count) || (Number(record.upvote_count) || 0) + 1) + 1;
+    this.fileStore._persist();
+    return record;
+  },
+
+  async appendIncidentSubReport(id, subReport, incomingUrgency) {
+    const normalizedUrgency = String(incomingUrgency || 'Medium');
+    if (this.pool) {
+      const currentUrgencyRank = "GREATEST(CASE lower(COALESCE(urgency, 'medium')) WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END, CASE lower(COALESCE(priority, '')) WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END)";
+      const incomingUrgencyRank = "CASE lower($3) WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END";
+      const targetUrgencyRank = `GREATEST(${currentUrgencyRank}, ${incomingUrgencyRank}, LEAST(4, ${currentUrgencyRank} + 1))`;
+      const urgencyLabel = `CASE ${targetUrgencyRank} WHEN 4 THEN 'Critical' WHEN 3 THEN 'High' WHEN 2 THEN 'Medium' WHEN 1 THEN 'Low' ELSE urgency END`;
+      const priorityLabel = `CASE ${targetUrgencyRank} WHEN 4 THEN 'CRITICAL' WHEN 3 THEN 'HIGH' WHEN 2 THEN 'MEDIUM' WHEN 1 THEN 'LOW' ELSE priority END`;
+      const { rows } = await this.pool.query(
+        `UPDATE incidents
+         SET sub_reports = COALESCE(sub_reports, '[]'::jsonb) || jsonb_build_array($2::jsonb),
+             report_count = COALESCE(report_count, 1) + 1,
+             urgency = ${urgencyLabel},
+             priority = CASE
+               WHEN (priority IS NULL OR lower(priority) IN ('low', 'medium', 'high', 'critical'))
+               THEN ${priorityLabel} ELSE priority END
+         WHERE id = $1
+         RETURNING *;`,
+        [id, JSON.stringify(subReport), normalizedUrgency]
+      );
+      return rows[0] || null;
+    }
+
+    if (!this.fileStore) this.fileStore = new FileStore();
+    const record = this.fileStore.findById(id);
+    if (!record) return null;
+    const rank = { low: 1, medium: 2, high: 3, critical: 4 };
+    const currentUrgency = String(record.urgency || 'Medium');
+    const currentPriority = String(record.priority || '').toLowerCase();
+    const currentRank = Math.max(rank[currentUrgency.toLowerCase()] || 0, rank[currentPriority] || 0);
+    const incomingRank = rank[normalizedUrgency.toLowerCase()] || 0;
+    record.sub_reports = Array.isArray(record.sub_reports) ? record.sub_reports : [];
+    record.sub_reports.push(subReport);
+    record.report_count = Math.max(1, Number(record.report_count) || (Number(record.upvote_count) || 0) + 1) + 1;
+    const nextRank = Math.max(currentRank, incomingRank, Math.min(4, currentRank + 1));
+    const nextUrgency = Object.keys(rank).find((key) => rank[key] === nextRank);
+    if (nextRank > currentRank && nextUrgency) {
+      record.urgency = nextUrgency.charAt(0).toUpperCase() + nextUrgency.slice(1);
+      if (!record.priority || rank[currentPriority]) { record.priority = nextUrgency.toUpperCase(); }
+    }
+    this.fileStore._persist();
+    return record;
   },
 
   async countIncidents() {

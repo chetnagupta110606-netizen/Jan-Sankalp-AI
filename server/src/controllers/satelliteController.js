@@ -60,8 +60,8 @@ async function verifySatellite(req, res) {
         : resolveRegion({});
     }
 
-    const lat = Number.isFinite(Number(region.centerLat)) ? Number(region.centerLat) : 28.6139;
-    const lng = Number.isFinite(Number(region.centerLng)) ? Number(region.centerLng) : 77.209;
+    const lat = Number.isFinite(Number(region.centerLat)) ? Number(region.centerLat) : 0;
+    const lng = Number.isFinite(Number(region.centerLng)) ? Number(region.centerLng) : 0;
     const h3Index = region.h3Index || 'unknown';
     const seed = seedFromString(`${h3Index}:${lat}:${lng}`);
 

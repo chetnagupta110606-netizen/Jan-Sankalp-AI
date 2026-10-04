@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS incidents (
   resolved_at            TIMESTAMP,
   penalty_status         VARCHAR(64) DEFAULT 'On Track',
   penalty_tier           VARCHAR(128),
+  report_count           INTEGER NOT NULL DEFAULT 1,
+  sub_reports            JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

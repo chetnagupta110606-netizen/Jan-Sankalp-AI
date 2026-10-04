@@ -10,7 +10,6 @@
 
 const IncidentModel = require('../models/incidentModel');
 const {
-  URBAN_REGIONS,
   resolveRegion,
   computeSlaTargetDate,
   formatDisplayDate
@@ -80,12 +79,14 @@ async function buildDprFromIncident(incident, extra = {}) {
     success: true,
     reportId,
     incident_id: incident.id,
+    location: incident.location_name,
     locationName: incident.location_name,
     category: incident.category,
     h3Index: incident.h3_index,
     coordinates: [incident.latitude, incident.longitude],
     centerLat: incident.latitude,
     centerLng: incident.longitude,
+    description: transcript,
     transcript,
     urgency: incident.urgency,
     status: incident.status,
@@ -143,12 +144,14 @@ async function buildDprFromPayload(payload = {}) {
     success: true,
     reportId: `DPR-${String(h3).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`,
     incident_id: payload.id || null,
+    location: payload.locationName || region.label,
     locationName: payload.locationName || region.label,
     category: payload.category || region.category,
     h3Index: h3,
     coordinates: payload.coordinates || [region.centerLat, region.centerLng],
     centerLat: region.centerLat,
     centerLng: region.centerLng,
+    description: transcript,
     transcript,
     urgency,
     status: payload.status || 'Pending Survey',
@@ -180,14 +183,20 @@ async function buildDprFromPayload(payload = {}) {
 async function generateDpr(req, res) {
   try {
     const body = safeBody(req);
+    const incidentId = body.id || body.incident_id;
 
-    // Prefer a live DB record when an id is supplied.
-    if (body.id || body.incident_id) {
-      const incident = await IncidentModel.findById(body.id || body.incident_id);
+    if (incidentId) {
+      const incident = await IncidentModel.findById(incidentId);
       if (incident) {
         const dpr = await buildDprFromIncident(incident, body);
         return res.json(dpr);
       }
+    }
+
+    const latest = await IncidentModel.findLatest();
+    if (latest) {
+      const dpr = await buildDprFromIncident(latest, body);
+      return res.json(dpr);
     }
 
     const dpr = await buildDprFromPayload(body);
@@ -202,13 +211,26 @@ async function generateDpr(req, res) {
 async function getDpr(req, res) {
   try {
     const query = req.query || {};
+    const incidentId = query.incidentId || query.id || query.incident_id;
+    if (incidentId) {
+      const incident = await IncidentModel.findById(incidentId);
+      if (!incident) {
+        return res.status(404).json({ success: false, error: 'Incident not found.' });
+      }
+      return res.json(await buildDprFromIncident(incident, query));
+    }
+
+    const latest = await IncidentModel.findLatest();
+    if (latest) {
+      return res.json(await buildDprFromIncident(latest, query));
+    }
+
     const coordinates = query.coordinates
       ? String(query.coordinates).split(',').map(Number)
       : null;
-
     const dpr = await buildDprFromPayload({
-      locationName: query.locationName || URBAN_REGIONS[0].label,
-      h3Index: query.h3Index || URBAN_REGIONS[0].h3Index,
+      locationName: query.locationName,
+      h3Index: query.h3Index,
       coordinates
     });
     return res.json(dpr);

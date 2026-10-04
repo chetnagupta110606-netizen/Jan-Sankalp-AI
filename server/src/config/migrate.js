@@ -38,6 +38,8 @@ const INCIDENTS_SCHEMA = `
     resolved_at            TIMESTAMP,
     penalty_status         VARCHAR(64) DEFAULT 'On Track',
     penalty_tier           VARCHAR(128),
+    report_count           INTEGER NOT NULL DEFAULT 1,
+    sub_reports            JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -90,6 +92,8 @@ async function runMigration() {
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS penalty_status VARCHAR(64) DEFAULT 'On Track';
       ALTER TABLE incidents ADD COLUMN IF NOT EXISTS penalty_tier VARCHAR(128);
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS report_count INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS sub_reports JSONB NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE incidents DROP CONSTRAINT IF EXISTS incidents_status_check;
 
       CREATE TABLE IF NOT EXISTS whistleblower_reports (

@@ -75,12 +75,35 @@ test('field officer resolution transitions to pending citizen verification', asy
   await submitResolution({
     params: { id: '42' },
     body: { notes: 'Work completed' },
-    files: { image: [{ buffer: photo }] }
+    files: {
+      originalImage: [{ buffer: originalPhoto }],
+      resolutionImage: [{ buffer: photo }]
+    }
   }, res);
 
   assert.equal(res.statusCode, 200);
   assert.equal(updatedIncident.status, 'Pending Citizen Verification');
   assert.equal(updatedIncident.priority, 'Awaiting Citizen Verification');
+});
+
+test('resolution submission without both images does not mutate incident state', async (t) => {
+  const originalMethods = {
+    findById: IncidentModel.findById,
+    update: IncidentModel.update
+  };
+  let updateCount = 0;
+  IncidentModel.findById = async () => ({ id: 42, status: 'Under Survey' });
+  IncidentModel.update = async () => { updateCount += 1; return null; };
+  t.after(() => Object.assign(IncidentModel, originalMethods));
+
+  for (const files of [{}, { resolutionImage: [{ buffer: Buffer.from('after only') }] }]) {
+    const res = responseCapture();
+    await submitResolution({ params: { id: '42' }, body: {}, files }, res);
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.error, /both resolution proof images are required/i);
+  }
+
+  assert.equal(updateCount, 0);
 });
 
 test('citizen still-broken feedback reopens the incident and escalates it', async (t) => {

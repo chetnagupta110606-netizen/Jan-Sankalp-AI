@@ -22,7 +22,6 @@ const { generateDpr, getDpr, getDprById } = require('../controllers/dprControlle
 const { validateReportSubmission, downloadIncidentCsv } = require('../controllers/reportController');
 const {
   submitResolution,
-  resolveIncident,
   verifyCitizenResolution,
   reopenExpiredCitizenVerifications
 } = require('../controllers/resolutionController');
@@ -36,9 +35,11 @@ const {
 const { resolveSmsUssdCommand, updateSmsUssdStatus } = require('../services/smsUssdService');
 const { simulateSmsCommand } = require('../controllers/smsController');
 const { requireOfficerOrAdmin } = require('../middleware/requireOfficerOrAdmin');
+const { login } = require('../controllers/authController');
 
 const router = express.Router();
 const uploadRoot = path.join(__dirname, '..', '..', 'uploads', 'resolutions');
+const allowedImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 fs.mkdirSync(uploadRoot, { recursive: true });
 
 const upload = multer({
@@ -51,8 +52,8 @@ const upload = multer({
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (!file || !file.mimetype || !file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image files are allowed for proof uploads.'));
+    if (!file || !allowedImageMimeTypes.has(String(file.mimetype || '').toLowerCase())) {
+      return cb(new Error('Only JPEG, PNG, and WebP images are allowed for proof uploads.'));
     }
     cb(null, true);
   }
@@ -62,6 +63,7 @@ const upload = multer({
 router.get('/health', (req, res) => {
   res.json({ status: 'online', version: 'v1', timestamp: new Date().toISOString() });
 });
+router.post('/auth/login', login);
 
 // ── Ingest ─────────────────────────────────────────────────────────
 router.post('/ingest', ingest);
@@ -172,8 +174,12 @@ router.post('/sms/ussd/admin/status', async (req, res) => {
 });
 
 // ── Proof-of-resolution anti-fraud gate ────────────────────────────
-router.post('/resolutions', requireOfficerOrAdmin, submitResolution);
-router.post('/incidents/:id/resolution', requireOfficerOrAdmin, submitResolution);
-router.post('/incidents/:incidentId/resolve', upload.single('proofImage'), resolveIncident);
+const resolutionUpload = upload.fields([
+  { name: 'originalImage', maxCount: 1 },
+  { name: 'resolutionImage', maxCount: 1 }
+]);
+router.post('/resolutions', requireOfficerOrAdmin, resolutionUpload, submitResolution);
+router.post('/incidents/:id/resolution', requireOfficerOrAdmin, resolutionUpload, submitResolution);
+router.post('/incidents/:incidentId/resolve', requireOfficerOrAdmin, resolutionUpload, submitResolution);
 
 module.exports = router;

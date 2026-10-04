@@ -46,6 +46,9 @@ function toIncidentPayload(row = {}) {
     penalty_status: penaltyStatusValue,
     penaltyTier: penaltyTierValue,
     penalty_tier: penaltyTierValue,
+    report_count: Math.max(1, Number(row.report_count) || (Number(row.upvote_count) || 0) + 1),
+    subReports: parseJson(row.sub_reports || row.subReports) || [],
+    sub_reports: parseJson(row.sub_reports || row.subReports) || [],
     upvote_count: Number(row.upvote_count) || 0,
     affected_citizens_count: Number(row.affected_citizens_count) || 0,
     created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()
@@ -87,6 +90,16 @@ const IncidentModel = {
     return updated;
   },
 
+  async incrementReportCount(id) {
+    const row = await db.incrementIncidentReportCount(id);
+    return toIncidentPayload(row);
+  },
+
+  async appendSubReport(id, subReport, urgency) {
+    const row = await db.appendIncidentSubReport(id, subReport, urgency);
+    return toIncidentPayload(row);
+  },
+
   async findAll() {
     const rows = await db.getAllIncidents();
     return rows.map((row) => {
@@ -122,8 +135,13 @@ const IncidentModel = {
   },
 
   async findLatest() {
-    const all = await this.findAll();
-    return all.length ? all[0] : null;
+    const row = await db.getLatestIncident();
+    const incident = toIncidentPayload(row);
+    if (incident) {
+      incident.has_original_photo = Boolean(incident.original_photo);
+      delete incident.original_photo;
+    }
+    return incident;
   }
 };
 

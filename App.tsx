@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { MapContainer, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import ImageScanModal, { type ScanCompleteResultData } from './components/ImageScanModal';
 import {
   generateDPRPdf,
@@ -33,6 +33,15 @@ function MapViewUpdater({
     }
   }, [center, zoom, map]);
 
+  return null;
+}
+
+function MapClickSelector({ onSelect }: { onSelect: (coordinates: [number, number]) => void }) {
+  useMapEvents({
+    click(event) {
+      onSelect([event.latlng.lat, event.latlng.lng]);
+    }
+  });
   return null;
 }
 
@@ -483,7 +492,8 @@ function SmsAdminPanel() {
 
 export default function App() {
   const [isScanOpen, setIsScanOpen] = useState(false);
-  const [mapCenter, setMapCenter] = useState<[number, number]>([28.6139, 77.209]);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([22.5, 78.0]);
+  const [locationStatus, setLocationStatus] = useState('Select a map point or use your browser location.');
   const [selectedDistrictData, setSelectedDistrictData] = useState<any>(null);
   const [dprData, setDprData] = useState<any>(null);
   const [latestSmsIncident, setLatestSmsIncident] = useState<any>(null);
@@ -549,7 +559,7 @@ export default function App() {
   };
 
   const districtLabel = useMemo(() => {
-    return mapCenter[0] >= 26.8 && mapCenter[1] <= 76.0 ? 'Jaipur' : 'Delhi';
+    return mapCenter[0] >= 26.8 && mapCenter[1] <= 76.0 ? 'Jaipur' : 'Selected Area';
   }, [mapCenter]);
 
   // Comparative zoom: the Jaipur collapse block opens at the delta-overlay
@@ -577,11 +587,26 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleLocateMe = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('Browser geolocation is unavailable. Select a point on the map.');
+      return;
+    }
+    setLocationStatus('Requesting your browser location...');
+    navigator.geolocation.getCurrentPosition((position) => {
+      const coordinates: [number, number] = [position.coords.latitude, position.coords.longitude];
+      setMapCenter(coordinates);
+      setLocationStatus(`Browser location selected: ${coordinates[0].toFixed(5)}, ${coordinates[1].toFixed(5)}`);
+    }, () => {
+      setLocationStatus('Could not access your location. Select a point on the map.');
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  };
+
   const handleScanComplete = (result: ScanCompleteResultData) => {
     setMapCenter(result.coordinates);
 
     const isJaipurIncident = result.coordinates[0] >= 26.8 && result.coordinates[1] <= 76.0;
-    const districtName = isJaipurIncident ? 'Jaipur' : 'Delhi';
+    const districtName = isJaipurIncident ? 'Jaipur' : 'Selected Area';
     const categoryName = result.category || 'Infrastructure';
     const score = Number(result.verificationScore ?? 0.85);
 
@@ -594,7 +619,7 @@ export default function App() {
       confidence: `${Math.round(score * 100)}%`,
       reportId: `SCAN-${Date.now()}`,
       // Real H3 spatial cell for the Jaipur collapse telemetry.
-      h3Index: isJaipurIncident ? JAIPUR_DELTA_H3_CELL : 'delhi-h3-index',
+      h3Index: isJaipurIncident ? JAIPUR_DELTA_H3_CELL : 'N/A',
       coordinates: result.coordinates,
       transcript: result.transcript,
       verificationScore: score,
@@ -877,6 +902,7 @@ export default function App() {
                 setLatestSmsIncident(incident);
                 const smsDistrict = incident?.location_name || 'SMS / USSD fallback';
                 setSelectedDistrictData({
+                  incidentId: incident?.id,
                   district: smsDistrict,
                   category: incident?.category || 'SMS',
                   urgency: incident?.urgency || 'Medium',
@@ -908,9 +934,13 @@ export default function App() {
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-3 shadow-xl shadow-slate-950/40">
             <div className="mb-3 flex items-center justify-between px-2">
               <h2 className="text-lg font-semibold text-white">District Heatmap</h2>
-              <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-cyan-300">
-                {districtLabel}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400" aria-live="polite">{locationStatus}</span>
+                <button type="button" onClick={handleLocateMe} className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20">Use my location</button>
+                <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-cyan-300">
+                  {districtLabel}
+                </span>
+              </div>
             </div>
 
             <div className="relative h-[440px] w-full overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
@@ -920,6 +950,10 @@ export default function App() {
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapViewUpdater center={mapCenter} zoom={mapZoom} />
+                <MapClickSelector onSelect={(coordinates) => {
+                  setMapCenter(coordinates);
+                  setLocationStatus(`Map location selected: ${coordinates[0].toFixed(5)}, ${coordinates[1].toFixed(5)}`);
+                }} />
               </MapContainer>
 
               {/* Floating temporal status badges (visible on the incident view). */}
@@ -986,6 +1020,7 @@ export default function App() {
       <ImageScanModal
         isOpen={isScanOpen}
         onClose={() => setIsScanOpen(false)}
+        selectedCoordinates={mapCenter}
         onScanComplete={handleScanComplete}
       />
     </div>
